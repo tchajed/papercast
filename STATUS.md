@@ -2,82 +2,72 @@
 
 ## What's Done
 
-### Backend (Rust/Axum) — Complete
-- **Database schema**: Two migrations covering feeds, episodes, and jobs tables with proper constraints and indexes
-- **Configuration**: `AppConfig` loaded from environment variables with sensible defaults
-- **API routes**:
-  - Feed CRUD (create, list, get, delete) with admin token auth
-  - Episode submission, status checking, deletion, and retry
-  - RSS feed generation with iTunes podcast extensions
+### Backend (Rust/Axum) — Complete, compiles cleanly
+- **Database**: SQLite with WAL mode, auto-creation, embedded migrations
+- **API routes**: Feed CRUD, episode submission (URL + PDF upload), status, retry, RSS
 - **Processing pipeline**:
-  - **Scrape**: Article readability extraction and arXiv support (metadata from arXiv API, HTML from ar5iv.org)
-  - **Clean**: Claude API integration with source-type-specific prompts (article vs. academic paper)
-  - **TTS**: Both OpenAI (tts-1-hd) and ElevenLabs (Flash v2.5) with text chunking at sentence boundaries
-  - **Storage**: Tigris S3 upload with content-addressed filenames
-- **Worker**: Postgres-backed job queue with `FOR UPDATE SKIP LOCKED`, exponential backoff retry, stage transitions in transactions
-- **Compiles**: `cargo check` passes cleanly
+  - **Scrape**: Article readability + arXiv (metadata API + ar5iv HTML)
+  - **PDF**: Claude vision extraction (handles two-column layouts)
+  - **Clean**: Claude with source-specific prompts (Sonnet for articles, Opus for academic)
+  - **TTS**: OpenAI, ElevenLabs, and Google Cloud TTS with text chunking
+  - **Image**: Gemini cover art generation (non-fatal, runs after `done`)
+  - **Storage**: Tigris S3 upload (audio + images, content-addressed keys)
+- **Worker**: Inline job execution, exponential backoff, stage transitions in transactions
+- **Static serving**: Axum serves SvelteKit build output via `tower-http` ServeDir
+- **Exact MP3 duration** via `mp3-duration` crate
 
-### Frontend (SvelteKit + Bun) — Complete
-- Three pages: feed list (admin), feed view (submit URLs + episode list), episode detail
+### Frontend (SvelteKit + Bun) — Complete, type-checks cleanly
+- Three pages: feed list (admin), feed view (URL submit + PDF upload), episode detail
+- Google TTS as third provider option
+- Cover image thumbnails in episode list, larger in detail view
 - Status polling every 5 seconds for in-progress episodes
-- Audio player for completed episodes
-- Retry button for failed episodes
-- Type-checks cleanly with `svelte-check`
+- Built as static SPA (adapter-static with fallback)
 
-### Deployment Config — Complete
-- Dockerfile (multi-stage Rust build)
-- fly.toml for Fly.io
-- .env.example with all configuration documented
+### Deployment — Complete
+- Multi-stage Dockerfile (Bun frontend build + Rust backend build)
+- Litestream backup of SQLite to Tigris
+- start.sh with auto-restore on first boot
+- fly.toml with volume mount for SQLite persistence
+- Single Fly.io app — no Vercel or separate frontend hosting
 
 ### Documentation — Complete
-- README.md — Quick start and overview
-- DESIGN.md — Human-readable architecture and API docs
-- DEPLOYMENT.md — Step-by-step deployment with all accounts and commands
+- README.md, DESIGN.md, DEPLOYMENT.md, this STATUS.md
 
 ## What Hasn't Been Tested
 
 The code compiles and type-checks but hasn't been run end-to-end because this environment doesn't have:
-- A running Postgres instance
-- Anthropic/OpenAI/ElevenLabs API keys configured
-- Tigris storage bucket
+- API keys (Anthropic, OpenAI, Google)
+- A Tigris bucket
+- A Fly.io account
 
-## Known Limitations / Things to Address Before First Deploy
+## Known Limitations
 
-1. **readability crate**: The `readability` crate (v0.3) may not handle all HTML well. If extraction quality is poor for specific sites, consider switching to a different crate or using a headless browser.
+1. **PDF extraction**: Uses Claude vision on the raw PDF (sends PDF as document). For very large PDFs (50+ pages), this may hit API limits. Consider page-by-page rendering with `pdfium-render` for better control.
 
-2. **ar5iv availability**: ar5iv.org occasionally has downtime or slow responses for less popular papers. The retry mechanism handles transient failures.
+2. **Sentence splitting**: Simple split on `.!?` — can be confused by abbreviations, decimal numbers, or URLs.
 
-3. **Claude model choice**: Currently both article and arXiv cleanup use `claude-sonnet-4-6`. For dense academic papers, switching arXiv to Opus would improve equation-to-speech conversion quality at higher cost.
+3. **CORS**: Currently allows all origins. For production, restrict to the app's domain.
 
-4. **Text chunking**: The sentence-splitting logic is simple (splits on `.!?`). It could be confused by abbreviations (e.g., "Dr. Smith"), decimal numbers, or URLs. A more robust NLP sentence tokenizer would help.
+4. **Litestream + auto-stop**: Fly's auto-stop pauses the machine. When it restarts, Litestream resumes from the last WAL position. There's a small window where WAL entries written just before stop might not be replicated. For a personal app this is acceptable.
 
-5. **MP3 duration**: Currently estimated from word count (150 wpm). Exact duration requires parsing MP3 frame headers.
+5. **No feed-level artwork**: RSS `<itunes:image>` at the channel level is not set — podcast clients show blank covers until per-episode images are generated.
 
-6. **CORS**: Currently allows all origins. For production, restrict to the frontend domain.
+## Test URLs
 
-## Suggested Test URLs
-
-Once deployed, test with these URLs in order of complexity:
-
-1. **Simple article**: `https://www.anthropic.com/engineering/managed-agents`
-   - Tests basic article scraping and cleanup
-
-2. **arXiv paper (Nola)**: `https://arxiv.org/abs/2401.03468`
-   - "Nola: Later-Free Ghost State for Verifying Termination in Iris"
-   - Tests arXiv metadata fetch, ar5iv HTML extraction, academic cleanup
-
-3. **arXiv paper (Spanner)**: Look up "Spanner: Google's Globally-Distributed Database" on Google Scholar or arXiv
-   - Classic systems paper, good test for longer content
+1. **Article**: `https://www.anthropic.com/engineering/managed-agents`
+2. **arXiv (Nola)**: `https://arxiv.org/abs/2401.03468` — "Later-Free Ghost State for Verifying Termination in Iris"
+3. **arXiv (Spanner)**: Look up on Google Scholar
+4. **PDF**: Download any two-column academic paper and use the PDF upload form
 
 ## Next Steps
 
 1. **Deploy to Fly.io** — Follow DEPLOYMENT.md
-2. **Test the pipeline end-to-end** with the test URLs above
-3. **Tune prompts** — The Claude cleanup prompts may need iteration based on real output quality
-4. **Add frontend environment config** — Set up Vercel with `VITE_API_BASE_URL`
-5. **Add to podcast client** — Test RSS feed in Overcast, Apple Podcasts, or Pocket Casts
-6. **Consider adding**:
-   - Feed artwork (iTunes image tag)
-   - More robust sentence splitting
-   - Rate limiting on episode submission
-   - Exact MP3 duration calculation
+2. **Test end-to-end** with the test URLs above
+3. **Tune Claude prompts** based on real output quality
+4. **Add custom domain** via Cloudflare (optional)
+5. **Consider adding**:
+   - Feed-level artwork
+   - More robust sentence splitting (NLP tokenizer)
+   - Rate limiting
+   - Email ingest (Cloudflare Email Routing)
+   - PWA share target for mobile
