@@ -4,11 +4,18 @@ primary_region = "sjc"
 [build]
   dockerfile = "Dockerfile"
 
+[env]
+  DATABASE_URL = "sqlite:///data/podcast.db"
+
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = true
   auto_start_machines = true
+
+[mounts]
+  source = "podcast_data"
+  destination = "/data"
 
 [[vm]]
   memory = "512mb"

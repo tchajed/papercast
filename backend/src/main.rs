@@ -9,6 +9,7 @@ use axum::Router;
 use sqlx::SqlitePool;
 use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use crate::config::AppConfig;
@@ -58,10 +59,20 @@ async fn main() {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    // Serve SvelteKit build output as static files
+    // SvelteKit adapter-static outputs to frontend/build/
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "/app/static".into());
+    let index_file = format!("{}/index.html", static_dir);
+
+    // Fallback serves index.html for SPA client-side routing
+    let serve_static =
+        ServeDir::new(&static_dir).not_found_service(ServeFile::new(&index_file));
+
     let app = Router::new()
         .merge(routes::rss_router())
         .nest("", routes::api_router())
         .with_state(state)
+        .fallback_service(serve_static)
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 

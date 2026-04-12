@@ -1,0 +1,10 @@
+dbs:
+  - path: /data/podcast.db
+    replicas:
+      - type: s3
+        bucket: ${BUCKET_NAME}
+        path: litestream/podcast.db
+        endpoint: ${AWS_ENDPOINT_URL_S3}
+        access-key-id: ${AWS_ACCESS_KEY_ID}
+        secret-access-key: ${AWS_SECRET_ACCESS_KEY}
+        region: auto
