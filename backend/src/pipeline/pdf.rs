@@ -97,9 +97,14 @@ pub async fn run(
             .header("content-type", "application/json")
             .json(&request)
             .send()
-            .await?
-            .error_for_status()
-            .context(format!("Claude API failed on page {}", i + 1))?;
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::error!("Claude API error on page {}: {status} {body}", i + 1);
+            anyhow::bail!("Claude API failed on page {} ({status}): {body}", i + 1);
+        }
 
         let claude_resp: ClaudeResponse = resp.json().await?;
         let page_text: String = claude_resp
