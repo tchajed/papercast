@@ -102,6 +102,11 @@ pub async fn run(
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            // Skip pages blocked by content filtering, bail on other errors
+            if body.contains("content filtering") {
+                tracing::warn!("Page {} blocked by content filter, skipping", i + 1);
+                continue;
+            }
             tracing::error!("Claude API error on page {}: {status} {body}", i + 1);
             anyhow::bail!("Claude API failed on page {} ({status}): {body}", i + 1);
         }
