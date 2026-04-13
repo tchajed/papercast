@@ -112,8 +112,14 @@ pub async fn run(
         .map(|c| c.text.clone())
         .context("Empty response from Claude")?;
 
-    sqlx::query("UPDATE episodes SET cleaned_text = $1 WHERE id = $2")
+    let word_count = cleaned_text.split_whitespace().count() as i32;
+    tracing::info!(
+        "Cleaning complete for episode {episode_id}: {word_count} words"
+    );
+
+    sqlx::query("UPDATE episodes SET cleaned_text = $1, word_count = $2 WHERE id = $3")
         .bind(&cleaned_text)
+        .bind(word_count)
         .bind(episode_id)
         .execute(pool)
         .await?;

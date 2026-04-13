@@ -20,14 +20,43 @@ pub async fn run(
 
     let cleaned_text = cleaned_text.context("No cleaned_text available for TTS")?;
 
+    let word_count = cleaned_text.split_whitespace().count();
     let chunks = chunk_text(&cleaned_text, 4000);
+    let total_chunks = chunks.len();
     let mut audio_parts: Vec<Bytes> = Vec::new();
 
-    let client = reqwest::Client::new();
+    tracing::info!(
+        "TTS starting for episode {episode_id}: {word_count} words, {total_chunks} chunks (~{:.0}s estimated)",
+        word_count as f64 * 0.13
+    );
 
-    for chunk in &chunks {
+    // Record total chunks for progress tracking
+    sqlx::query("UPDATE episodes SET tts_chunks_done = 0, tts_chunks_total = $1 WHERE id = $2")
+        .bind(total_chunks as i32)
+        .bind(episode_id)
+        .execute(pool)
+        .await?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let chunk_words = chunk.split_whitespace().count();
+        tracing::info!(
+            "TTS chunk {}/{} for episode {episode_id} ({chunk_words} words)",
+            i + 1,
+            total_chunks,
+        );
         let audio = tts_google(&client, config, chunk).await?;
         audio_parts.push(audio);
+
+        // Update progress
+        sqlx::query("UPDATE episodes SET tts_chunks_done = $1 WHERE id = $2")
+            .bind((i + 1) as i32)
+            .bind(episode_id)
+            .execute(pool)
+            .await?;
     }
 
     // Concatenate MP3 chunks

@@ -55,6 +55,9 @@ pub struct EpisodeResponse {
     pub audio_url: Option<String>,
     pub image_url: Option<String>,
     pub duration_secs: Option<i32>,
+    pub word_count: Option<i32>,
+    pub tts_chunks_done: i32,
+    pub tts_chunks_total: i32,
     pub tts_provider: Option<String>,
     pub error_msg: Option<String>,
     pub pub_date: Option<String>,
@@ -271,7 +274,8 @@ async fn get_episode(
 
     let ep = sqlx::query_as::<_, EpisodeResponse>(
         "SELECT id, title, source_url, source_type, status, audio_url, image_url,
-                duration_secs, tts_provider, error_msg, pub_date, created_at
+                duration_secs, word_count, tts_chunks_done, tts_chunks_total,
+                tts_provider, error_msg, pub_date, created_at
          FROM episodes WHERE id = $1 AND feed_id = $2",
     )
     .bind(&episode_id)
