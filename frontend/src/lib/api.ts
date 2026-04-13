@@ -98,25 +98,22 @@ export async function getFeed(feedToken: string): Promise<FeedWithEpisodes> {
 
 export async function submitEpisode(
 	feedToken: string,
-	url: string,
-	ttsProvider?: string
+	url: string
 ): Promise<SubmitEpisodeResponse> {
 	return apiFetch(`/api/v1/feeds/${feedToken}/episodes`, {
 		method: 'POST',
-		body: JSON.stringify({ url, tts_provider: ttsProvider }),
+		body: JSON.stringify({ url }),
 	});
 }
 
 export async function uploadPdf(
 	feedToken: string,
 	file: File,
-	title?: string,
-	ttsProvider?: string
+	title?: string
 ): Promise<SubmitEpisodeResponse> {
 	const formData = new FormData();
 	formData.append('file', file);
 	if (title) formData.append('title', title);
-	if (ttsProvider) formData.append('tts_provider', ttsProvider);
 
 	return apiFetch(`/api/v1/feeds/${feedToken}/episodes/pdf`, {
 		method: 'POST',

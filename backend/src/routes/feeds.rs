@@ -31,7 +31,7 @@ pub struct CreateFeedRequest {
 }
 
 fn default_tts() -> String {
-    "openai".into()
+    "google".into()
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -88,9 +88,9 @@ async fn create_feed(
 ) -> AppResult<(StatusCode, Json<FeedResponse>)> {
     require_admin(&headers, &state.config.admin_token)?;
 
-    if !matches!(req.tts_default.as_str(), "openai" | "elevenlabs" | "google") {
+    if req.tts_default != "google" {
         return Err(AppError::BadRequest(
-            "tts_default must be 'openai', 'elevenlabs', or 'google'".into(),
+            "tts_default must be 'google'".into(),
         ));
     }
 

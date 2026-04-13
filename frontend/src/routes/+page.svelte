@@ -11,7 +11,7 @@
 	let newSlug = $state('');
 	let newTitle = $state('');
 	let newDescription = $state('');
-	let newTts = $state('openai');
+	let newTts = $state('google');
 
 	async function loadFeeds() {
 		if (!adminToken) return;
@@ -89,14 +89,6 @@
 					<div class="mb-1">
 						<label>Description</label>
 						<input bind:value={newDescription} placeholder="Optional description" />
-					</div>
-					<div class="mb-1">
-						<label>Default TTS</label>
-						<select bind:value={newTts}>
-							<option value="openai">OpenAI</option>
-							<option value="elevenlabs">ElevenLabs</option>
-							<option value="google">Google</option>
-						</select>
 					</div>
 					<button type="submit" class="primary">Create Feed</button>
 				</form>

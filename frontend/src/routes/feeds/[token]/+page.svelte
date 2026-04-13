@@ -13,13 +13,11 @@
 	let feed = $state<FeedWithEpisodes | null>(null);
 	let error = $state('');
 	let submitUrl = $state('');
-	let submitTts = $state('');
 	let submitting = $state(false);
 
 	// PDF upload
 	let pdfFile = $state<File | null>(null);
 	let pdfTitle = $state('');
-	let pdfTts = $state('');
 	let uploadingPdf = $state(false);
 
 	let token = $derived($page.params.token ?? '');
@@ -28,8 +26,6 @@
 	async function loadFeed() {
 		try {
 			feed = await getFeed(token);
-			if (!submitTts && feed) submitTts = feed.tts_default;
-			if (!pdfTts && feed) pdfTts = feed.tts_default;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load feed';
 		}
@@ -67,7 +63,7 @@
 		submitting = true;
 		error = '';
 		try {
-			await submitEpisode(token, submitUrl, submitTts || undefined);
+			await submitEpisode(token, submitUrl);
 			submitUrl = '';
 			await loadFeed();
 			startPolling();
@@ -83,7 +79,7 @@
 		uploadingPdf = true;
 		error = '';
 		try {
-			await uploadPdf(token, pdfFile, pdfTitle || undefined, pdfTts || undefined);
+			await uploadPdf(token, pdfFile, pdfTitle || undefined);
 			pdfFile = null;
 			pdfTitle = '';
 			await loadFeed();
@@ -133,11 +129,6 @@
 					placeholder="https://arxiv.org/abs/2301.07041 or article URL"
 					disabled={submitting}
 				/>
-				<select bind:value={submitTts} style="width: auto;">
-					<option value="openai">OpenAI</option>
-					<option value="elevenlabs">ElevenLabs</option>
-					<option value="google">Google</option>
-				</select>
 				<button type="submit" class="primary" disabled={submitting}>
 					{submitting ? 'Submitting...' : 'Submit'}
 				</button>
@@ -151,11 +142,6 @@
 			<label class="mb-1" style="display:block; font-weight:500;">Upload PDF</label>
 			<div class="flex mb-1">
 				<input type="file" accept=".pdf" onchange={handleFileInput} disabled={uploadingPdf} />
-				<select bind:value={pdfTts} style="width: auto;">
-					<option value="openai">OpenAI</option>
-					<option value="elevenlabs">ElevenLabs</option>
-					<option value="google">Google</option>
-				</select>
 			</div>
 			<div class="flex">
 				<input bind:value={pdfTitle} placeholder="Title (optional)" disabled={uploadingPdf} />

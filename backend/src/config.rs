@@ -9,12 +9,8 @@ pub struct AppConfig {
     pub aws_region: String,
     pub bucket_name: String,
     pub anthropic_api_key: String,
-    pub google_api_key: Option<String>,
+    pub google_api_key: String,
     pub admin_token: String,
-    pub openai_api_key: Option<String>,
-    pub elevenlabs_api_key: Option<String>,
-    pub elevenlabs_voice_id: String,
-    pub openai_tts_voice: String,
     pub google_tts_voice: String,
     pub host: String,
     pub port: u16,
@@ -26,14 +22,6 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Self {
-        let openai_api_key = env::var("OPENAI_API_KEY").ok();
-        let elevenlabs_api_key = env::var("ELEVENLABS_API_KEY").ok();
-        let google_api_key = env::var("GOOGLE_API_KEY").ok();
-
-        if openai_api_key.is_none() && elevenlabs_api_key.is_none() && google_api_key.is_none() {
-            panic!("At least one TTS provider key must be set (OPENAI_API_KEY, ELEVENLABS_API_KEY, or GOOGLE_API_KEY)");
-        }
-
         let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
         let port = env::var("PORT")
             .unwrap_or_else(|_| "8080".into())
@@ -51,14 +39,8 @@ impl AppConfig {
             aws_region: env::var("AWS_REGION").unwrap_or_else(|_| "auto".into()),
             bucket_name: required("BUCKET_NAME"),
             anthropic_api_key: required("ANTHROPIC_API_KEY"),
-            google_api_key,
+            google_api_key: required("GOOGLE_API_KEY"),
             admin_token: required("ADMIN_TOKEN"),
-            openai_api_key,
-            elevenlabs_api_key,
-            elevenlabs_voice_id: env::var("ELEVENLABS_VOICE_ID")
-                .unwrap_or_else(|_| "Rachel".into()),
-            openai_tts_voice: env::var("OPENAI_TTS_VOICE")
-                .unwrap_or_else(|_| "onyx".into()),
             google_tts_voice: env::var("GOOGLE_TTS_VOICE")
                 .unwrap_or_else(|_| "en-US-Journey-D".into()),
             host,

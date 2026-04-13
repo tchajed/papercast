@@ -16,16 +16,25 @@ A self-hosted web app that converts web articles, arXiv papers, and PDFs into po
 
 - Rust 1.75+
 - Bun
-- API keys: Anthropic, and at least one of OpenAI / ElevenLabs / Google
+- API keys: Anthropic, Google (for TTS and Gemini image generation)
+
+### Setup
+
+```bash
+cp .env.example .env
+# Edit .env with your API keys and credentials
+# Generate an admin token: openssl rand -hex 32
+```
+
+The `.env` file is gitignored. It also holds `FLY_API_TOKEN` for Fly.io CLI access. Source it before running anything:
+
+```bash
+set -a; source .env; set +a
+```
 
 ### Backend
 
 ```bash
-cp .env.example .env
-# Edit .env with your credentials
-# Set DATABASE_URL=sqlite://podcast.db for local dev
-# Set STATIC_DIR=../frontend/build
-
 cd backend
 cargo run
 ```
@@ -46,7 +55,7 @@ bun run dev      # Or run dev server on :5173 (set VITE_API_BASE_URL=http://loca
 1. **Submit a URL** (article or arXiv paper) or **upload a PDF** via the web UI
 2. **Scrape/Extract**: Articles via readability; arXiv via ar5iv.org HTML; PDFs via Claude vision
 3. **Clean**: Claude removes navigation debris, converts equations to spoken English
-4. **TTS**: OpenAI, ElevenLabs, or Google Cloud TTS converts cleaned text to MP3
+4. **TTS**: Google Cloud TTS converts cleaned text to MP3
 5. **Publish**: Audio uploaded to Tigris; episode appears in the RSS feed
 6. **Cover Art** (optional): Gemini generates a per-episode illustration
 

@@ -105,7 +105,7 @@ async fn get_tts_default(pool: &sqlx::SqlitePool, feed_id: &str) -> AppResult<St
 
 fn validate_tts_provider(provider: Option<&String>, default: String) -> AppResult<String> {
     match provider {
-        Some(p) if p == "openai" || p == "elevenlabs" || p == "google" => Ok(p.clone()),
+        Some(p) if p == "google" => Ok(p.clone()),
         Some(p) => Err(AppError::BadRequest(format!("Invalid tts_provider: {p}"))),
         None => Ok(default),
     }

@@ -12,19 +12,37 @@ Everything runs in a single Fly.io app. No Vercel, no separate frontend hosting.
 2. **Anthropic** — Claude API for text cleanup and PDF extraction
    - API key from https://console.anthropic.com
 
-3. **OpenAI** (recommended) — TTS
-   - API key from https://platform.openai.com/api-keys
-
-4. **Google Cloud** (optional) — Google TTS + Gemini image generation
+3. **Google Cloud** — Google TTS + Gemini image generation
    - API key from https://aistudio.google.com/apikey
    - One key covers both TTS and Gemini
 
-5. **ElevenLabs** (optional) — Alternative TTS
-   - API key from https://elevenlabs.io
-   - Note your preferred voice ID
-
-6. **Domain registrar** (optional) — For custom domain
+4. **Domain registrar** (optional) — For custom domain
    - Any registrar works; Cloudflare recommended for free proxying
+
+## Environment Setup
+
+All secrets and config live in `.env` (gitignored). Copy the template and fill in your values:
+
+```bash
+cp .env.example .env
+# Edit .env with your API keys
+# Generate an admin token: openssl rand -hex 32
+```
+
+Source it before running any commands (backend, `fly`, or the sync script):
+
+```bash
+set -a; source .env; set +a
+```
+
+The `.env` file includes `FLY_API_TOKEN`, which the `fly` CLI picks up automatically — no need for `fly auth login` in environments where you've set it.
+
+To push API key secrets to Fly.io after setting them in `.env`:
+
+```bash
+./scripts/sync-secrets.sh push    # pushes ANTHROPIC_API_KEY, GOOGLE_API_KEY, ADMIN_TOKEN, PUBLIC_URL
+./scripts/sync-secrets.sh status  # shows what's set locally vs on Fly
+```
 
 ## Step-by-Step Deployment
 
@@ -60,17 +78,9 @@ echo "Save this admin token: $ADMIN_TOKEN"
 
 fly secrets set \
   ANTHROPIC_API_KEY="sk-ant-..." \
-  OPENAI_API_KEY="sk-..." \
+  GOOGLE_API_KEY="..." \
   ADMIN_TOKEN="$ADMIN_TOKEN" \
   PUBLIC_URL="https://my-tts-podcast.fly.dev"
-
-# Optional: Google (TTS + image generation)
-fly secrets set GOOGLE_API_KEY="..."
-
-# Optional: ElevenLabs
-fly secrets set \
-  ELEVENLABS_API_KEY="..." \
-  ELEVENLABS_VOICE_ID="..."
 ```
 
 Note: `DATABASE_URL` is set in `fly.toml` env section, not as a secret.
@@ -141,7 +151,7 @@ Cloudflare proxying gives free TLS, DDoS protection, and edge caching of RSS fee
 Per-episode costs:
 - Claude cleanup: $0.01–$1.50 (Sonnet for articles, Opus for papers)
 - PDF extraction: ~$0.20–0.60 per 20-page paper
-- TTS: ~$0.30 per 20K-char article (OpenAI), varies by provider
+- TTS: ~$0.04 per 20K-char article (Google Cloud TTS)
 - Image generation: ~$0.04 per episode (Gemini)
 
 ## Monitoring

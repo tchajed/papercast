@@ -9,7 +9,7 @@
   - **Scrape**: Article readability + arXiv (metadata API + ar5iv HTML)
   - **PDF**: Claude vision extraction (handles two-column layouts)
   - **Clean**: Claude with source-specific prompts (Sonnet for articles, Opus for academic)
-  - **TTS**: OpenAI, ElevenLabs, and Google Cloud TTS with text chunking
+  - **TTS**: Google Cloud TTS with text chunking
   - **Image**: Gemini cover art generation (non-fatal, runs after `done`)
   - **Storage**: Tigris S3 upload (audio + images, content-addressed keys)
 - **Worker**: Inline job execution, exponential backoff, stage transitions in transactions
@@ -18,7 +18,7 @@
 
 ### Frontend (SvelteKit + Bun) — Complete, type-checks cleanly
 - Three pages: feed list (admin), feed view (URL submit + PDF upload), episode detail
-- Google TTS as third provider option
+- Google TTS as the TTS provider
 - Cover image thumbnails in episode list, larger in detail view
 - Status polling every 5 seconds for in-progress episodes
 - Built as static SPA (adapter-static with fallback)
@@ -36,7 +36,7 @@
 ## What Hasn't Been Tested
 
 The code compiles and type-checks but hasn't been run end-to-end because this environment doesn't have:
-- API keys (Anthropic, OpenAI, Google)
+- API keys (Anthropic, Google)
 - A Tigris bucket
 - A Fly.io account
 

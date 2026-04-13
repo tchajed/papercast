@@ -11,15 +11,14 @@ pub async fn run(
     config: &AppConfig,
     storage: &StorageClient,
 ) -> Result<()> {
-    let (cleaned_text, tts_provider) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
-        "SELECT cleaned_text, tts_provider FROM episodes WHERE id = $1",
+    let cleaned_text = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT cleaned_text FROM episodes WHERE id = $1",
     )
     .bind(episode_id)
     .fetch_one(pool)
     .await?;
 
     let cleaned_text = cleaned_text.context("No cleaned_text available for TTS")?;
-    let provider = tts_provider.unwrap_or_else(|| "openai".into());
 
     let chunks = chunk_text(&cleaned_text, 4000);
     let mut audio_parts: Vec<Bytes> = Vec::new();
@@ -27,11 +26,7 @@ pub async fn run(
     let client = reqwest::Client::new();
 
     for chunk in &chunks {
-        let audio = match provider.as_str() {
-            "elevenlabs" => tts_elevenlabs(&client, config, chunk).await?,
-            "google" => tts_google(&client, config, chunk).await?,
-            _ => tts_openai(&client, config, chunk).await?,
-        };
+        let audio = tts_google(&client, config, chunk).await?;
         audio_parts.push(audio);
     }
 
@@ -98,72 +93,14 @@ fn split_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
-async fn tts_openai(client: &reqwest::Client, config: &AppConfig, text: &str) -> Result<Bytes> {
-    let api_key = config
-        .openai_api_key
-        .as_ref()
-        .context("OPENAI_API_KEY not set")?;
-
-    let resp = client
-        .post("https://api.openai.com/v1/audio/speech")
-        .bearer_auth(api_key)
-        .json(&serde_json::json!({
-            "model": "tts-1-hd",
-            "voice": config.openai_tts_voice,
-            "input": text,
-            "response_format": "mp3",
-        }))
-        .send()
-        .await?
-        .error_for_status()
-        .context("OpenAI TTS request failed")?;
-
-    Ok(resp.bytes().await?)
-}
-
-async fn tts_elevenlabs(
-    client: &reqwest::Client,
-    config: &AppConfig,
-    text: &str,
-) -> Result<Bytes> {
-    let api_key = config
-        .elevenlabs_api_key
-        .as_ref()
-        .context("ELEVENLABS_API_KEY not set")?;
-
-    let url = format!(
-        "https://api.elevenlabs.io/v1/text-to-speech/{}",
-        config.elevenlabs_voice_id
-    );
-
-    let resp = client
-        .post(&url)
-        .header("xi-api-key", api_key.as_str())
-        .json(&serde_json::json!({
-            "text": text,
-            "model_id": "eleven_flash_v2_5",
-        }))
-        .send()
-        .await?
-        .error_for_status()
-        .context("ElevenLabs TTS request failed")?;
-
-    Ok(resp.bytes().await?)
-}
-
 async fn tts_google(
     client: &reqwest::Client,
     config: &AppConfig,
     text: &str,
 ) -> Result<Bytes> {
-    let api_key = config
-        .google_api_key
-        .as_ref()
-        .context("GOOGLE_API_KEY not set")?;
-
     let url = format!(
         "https://texttospeech.googleapis.com/v1/text:synthesize?key={}",
-        api_key
+        config.google_api_key
     );
 
     let resp = client

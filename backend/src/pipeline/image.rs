@@ -19,10 +19,7 @@ pub async fn run(
         return Ok(());
     }
 
-    let google_api_key = config
-        .google_api_key
-        .as_ref()
-        .context("GOOGLE_API_KEY not set for image generation")?;
+    let google_api_key = &config.google_api_key;
 
     let cleaned_text = sqlx::query_scalar::<_, Option<String>>(
         "SELECT cleaned_text FROM episodes WHERE id = $1",

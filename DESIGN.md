@@ -27,10 +27,8 @@ There is no user authentication. Access is controlled by secret feed tokens (UUI
 │  │ Litestream─┼──────┼───────▶  - images │     │
 │  │  backup    │      │       │  - backup │     │
 │  └────────────┘  ┌───▼──────┐└───────────┘     │
-│                  │ TTS APIs │                    │
-│                  │ OpenAI   │                    │
-│                  │ ElevenL. │                    │
 │                  │ Google   │                    │
+│                  │ TTS API  │                    │
 │                  └──────────┘                    │
 └──────────────────────────────────────────────────┘
 ```
@@ -47,7 +45,7 @@ Each feed is a podcast channel. Identified by a secret `feed_token` (UUID as TEX
 | slug | TEXT | Human-readable ("ml-papers") |
 | title | TEXT | Display name |
 | feed_token | TEXT (UUID) | Secret token for RSS URL and API access |
-| tts_default | TEXT | Default TTS provider (openai/elevenlabs/google) |
+| tts_default | TEXT | Default TTS provider (google) |
 
 ### Episodes
 
@@ -132,10 +130,7 @@ Source-type-specific prompts:
 
 ### TTS
 
-Three providers:
-- **OpenAI** (`tts-1-hd`, configurable voice)
-- **ElevenLabs** (`eleven_flash_v2_5`, configurable voice ID)
-- **Google Cloud TTS** (Journey voices, configurable)
+Uses **Google Cloud TTS** (Journey voices, configurable via `GOOGLE_TTS_VOICE`).
 
 Text split into ~4000-char chunks at sentence boundaries. Chunks processed sequentially, MP3 frames concatenated. Exact duration via `mp3-duration` crate.
 
@@ -164,6 +159,6 @@ Single Fly.io app. SQLite on a Fly volume, backed up to Tigris via Litestream. N
 
 All via environment variables. See `.env.example`.
 
-Required: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `ADMIN_TOKEN`, S3/Tigris credentials, at least one TTS provider key.
+Required: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `ADMIN_TOKEN`, S3/Tigris credentials.
 
-Optional: `GOOGLE_API_KEY` (for Google TTS and Gemini images), `GENERATE_IMAGES` (default true).
+Optional: `GOOGLE_TTS_VOICE` (default "en-US-Journey-D"), `GENERATE_IMAGES` (default true).
