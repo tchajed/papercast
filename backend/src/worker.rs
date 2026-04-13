@@ -69,6 +69,7 @@ async fn execute_job(job: Job, pool: &SqlitePool, config: &AppConfig, storage: &
         let stage_status = match job.job_type.as_str() {
             "scrape" | "pdf" => "scraping",
             "clean" => "cleaning",
+            "summarize" => "summarizing",
             "tts" => "tts",
             _ => "error",
         };
@@ -88,6 +89,7 @@ async fn execute_job(job: Job, pool: &SqlitePool, config: &AppConfig, storage: &
         "scrape" => crate::pipeline::scrape::run(&job.episode_id, pool, config).await,
         "pdf" => crate::pipeline::pdf::run(&job.episode_id, pool, config).await,
         "clean" => crate::pipeline::clean::run(&job.episode_id, pool, config).await,
+        "summarize" => crate::pipeline::summarize::run(&job.episode_id, pool, config).await,
         "tts" => crate::pipeline::tts::run(&job.episode_id, pool, config, storage).await,
         "image" => crate::pipeline::image::run(&job.episode_id, pool, config, storage).await,
         other => Err(anyhow::anyhow!("Unknown job type: {other}")),
@@ -137,6 +139,44 @@ async fn complete_job(pool: &SqlitePool, job: &Job, config: &AppConfig) -> Resul
                 .await?;
         }
         "clean" => {
+            // Check if this episode needs summarization
+            let summarize = sqlx::query_scalar::<_, i32>(
+                "SELECT summarize FROM episodes WHERE id = $1",
+            )
+            .bind(&job.episode_id)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap_or(0);
+
+            if summarize != 0 {
+                let job_id = new_id();
+                sqlx::query(
+                    "INSERT INTO jobs (id, episode_id, job_type, status) VALUES ($1, $2, 'summarize', 'queued')",
+                )
+                .bind(&job_id)
+                .bind(&job.episode_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("UPDATE episodes SET status = 'summarizing' WHERE id = $1")
+                    .bind(&job.episode_id)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                let job_id = new_id();
+                sqlx::query(
+                    "INSERT INTO jobs (id, episode_id, job_type, status) VALUES ($1, $2, 'tts', 'queued')",
+                )
+                .bind(&job_id)
+                .bind(&job.episode_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("UPDATE episodes SET status = 'tts' WHERE id = $1")
+                    .bind(&job.episode_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        "summarize" => {
             let job_id = new_id();
             sqlx::query(
                 "INSERT INTO jobs (id, episode_id, job_type, status) VALUES ($1, $2, 'tts', 'queued')",

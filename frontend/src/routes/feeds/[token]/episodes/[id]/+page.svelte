@@ -6,8 +6,9 @@
 	let episode = $state<Episode | null>(null);
 	let error = $state('');
 	let retrying = $state(false);
-	let showText = $state(false);
+	let showText = $state<false | 'cleaned' | 'transcript'>(false);
 	let cleanedText = $state<string | null>(null);
+	let transcript = $state<string | null>(null);
 	let loadingText = $state(false);
 
 	let token = $derived($page.params.token ?? '');
@@ -47,23 +48,27 @@
 		}
 	}
 
-	async function toggleText() {
-		if (showText) {
+	async function loadTextData() {
+		if (cleanedText !== null) return;
+		loadingText = true;
+		try {
+			const data = await getEpisodeText(token, episodeId);
+			cleanedText = data.cleaned_text;
+			transcript = (data as { transcript?: string | null }).transcript ?? null;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load text';
+		} finally {
+			loadingText = false;
+		}
+	}
+
+	async function toggleText(which: 'cleaned' | 'transcript') {
+		if (showText === which) {
 			showText = false;
 			return;
 		}
-		if (cleanedText === null) {
-			loadingText = true;
-			try {
-				const data = await getEpisodeText(token, episodeId);
-				cleanedText = data.cleaned_text;
-			} catch (e) {
-				error = e instanceof Error ? e.message : 'Failed to load text';
-			} finally {
-				loadingText = false;
-			}
-		}
-		showText = true;
+		await loadTextData();
+		showText = which;
 	}
 
 	function badgeClass(status: string): string {
@@ -139,17 +144,27 @@
 			</div>
 		{/if}
 
-		<div class="mt-2">
-			<button onclick={toggleText} disabled={loadingText}>
-				{loadingText ? 'Loading...' : showText ? 'Hide Text' : 'View Cleaned Text'}
+		<div class="mt-2 flex" style="gap: 0.5rem;">
+			<button onclick={() => toggleText('cleaned')} disabled={loadingText}>
+				{showText === 'cleaned' ? 'Hide' : 'Cleaned Text'}
 			</button>
+			{#if transcript}
+				<button onclick={() => toggleText('transcript')} disabled={loadingText}>
+					{showText === 'transcript' ? 'Hide' : 'Transcript'}
+				</button>
+			{/if}
+			{#if loadingText}
+				<span class="muted">Loading...</span>
+			{/if}
 		</div>
-		{#if showText && cleanedText}
+		{#if showText === 'cleaned' && cleanedText}
 			<div class="mt-2" style="white-space: pre-wrap; font-size: 0.875rem; max-height: 400px; overflow-y: auto; padding: 0.75rem; background: var(--surface); border-radius: 6px;">
 				{cleanedText}
 			</div>
-		{:else if showText && cleanedText === undefined}
-			<p class="muted mt-2">No cleaned text available yet.</p>
+		{:else if showText === 'transcript' && transcript}
+			<div class="mt-2" style="white-space: pre-wrap; font-size: 0.875rem; max-height: 400px; overflow-y: auto; padding: 0.75rem; background: var(--surface); border-radius: 6px;">
+				{transcript}
+			</div>
 		{/if}
 	</div>
 {:else if error}

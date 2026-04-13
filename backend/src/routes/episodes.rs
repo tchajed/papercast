@@ -38,6 +38,8 @@ pub fn router() -> Router<AppState> {
 pub struct SubmitEpisodeRequest {
     pub url: String,
     pub tts_provider: Option<String>,
+    #[serde(default)]
+    pub summarize: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,8 +143,8 @@ async fn submit_episode(
     let mut tx = state.pool.begin().await?;
 
     sqlx::query(
-        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, tts_provider, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending')",
+        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, tts_provider, summarize, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')",
     )
     .bind(&episode_id)
     .bind(&feed_id)
@@ -150,6 +152,7 @@ async fn submit_episode(
     .bind(&req.url)
     .bind(source_type)
     .bind(&tts_provider)
+    .bind(req.summarize as i32)
     .execute(&mut *tx)
     .await?;
 
@@ -184,6 +187,7 @@ async fn upload_pdf(
     let mut pdf_bytes: Option<Vec<u8>> = None;
     let mut title: Option<String> = None;
     let mut tts_provider_field: Option<String> = None;
+    let mut summarize = false;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         AppError::BadRequest(format!("Failed to read multipart field: {e}"))
@@ -217,6 +221,10 @@ async fn upload_pdf(
                         })?,
                 );
             }
+            "summarize" => {
+                let val = field.text().await.unwrap_or_default();
+                summarize = val == "true" || val == "1";
+            }
             _ => {}
         }
     }
@@ -238,13 +246,14 @@ async fn upload_pdf(
     let mut tx = state.pool.begin().await?;
 
     sqlx::query(
-        "INSERT INTO episodes (id, feed_id, title, source_type, tts_provider, status)
-         VALUES ($1, $2, $3, 'pdf', $4, 'pending')",
+        "INSERT INTO episodes (id, feed_id, title, source_type, tts_provider, summarize, status)
+         VALUES ($1, $2, $3, 'pdf', $4, $5, 'pending')",
     )
     .bind(&episode_id)
     .bind(&feed_id)
     .bind(&title)
     .bind(&tts_provider)
+    .bind(summarize as i32)
     .execute(&mut *tx)
     .await?;
 
@@ -398,17 +407,19 @@ async fn get_episode_text(
 ) -> AppResult<Json<serde_json::Value>> {
     let feed_id = resolve_feed(&state.pool, &feed_token).await?;
 
-    let (cleaned_text, raw_text) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
-        "SELECT cleaned_text, raw_text FROM episodes WHERE id = $1 AND feed_id = $2",
-    )
-    .bind(&episode_id)
-    .bind(&feed_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let (cleaned_text, transcript, raw_text) =
+        sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+            "SELECT cleaned_text, transcript, raw_text FROM episodes WHERE id = $1 AND feed_id = $2",
+        )
+        .bind(&episode_id)
+        .bind(&feed_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     Ok(Json(serde_json::json!({
         "cleaned_text": cleaned_text,
+        "transcript": transcript,
         "raw_text": raw_text,
     })))
 }
@@ -446,6 +457,7 @@ async fn retry_episode(
     let new_status = match failed_job_type.as_str() {
         "scrape" | "pdf" => "pending",
         "clean" => "scraping",
+        "summarize" => "cleaning",
         "tts" => "cleaning",
         _ => "pending",
     };

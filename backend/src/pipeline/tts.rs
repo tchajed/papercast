@@ -11,17 +11,20 @@ pub async fn run(
     config: &AppConfig,
     storage: &StorageClient,
 ) -> Result<()> {
-    let cleaned_text = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT cleaned_text FROM episodes WHERE id = $1",
+    // Use transcript (from summarization) if available, otherwise cleaned_text
+    let (transcript, cleaned_text) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT transcript, cleaned_text FROM episodes WHERE id = $1",
     )
     .bind(episode_id)
     .fetch_one(pool)
     .await?;
 
-    let cleaned_text = cleaned_text.context("No cleaned_text available for TTS")?;
+    let tts_text = transcript
+        .or(cleaned_text)
+        .context("No text available for TTS")?;
 
-    let word_count = cleaned_text.split_whitespace().count();
-    let chunks = chunk_text(&cleaned_text, 4000);
+    let word_count = tts_text.split_whitespace().count();
+    let chunks = chunk_text(&tts_text, 4000);
     let total_chunks = chunks.len();
     let mut audio_parts: Vec<Bytes> = Vec::new();
 
@@ -68,7 +71,6 @@ pub async fn run(
         .map(|d| d.as_secs() as i32)
         .unwrap_or_else(|_| {
             // Fallback: estimate from word count
-            let word_count = cleaned_text.split_whitespace().count();
             (word_count as f64 / 150.0 * 60.0) as i32
         });
 

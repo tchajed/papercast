@@ -20,6 +20,9 @@
 	let pdfTitle = $state('');
 	let uploadingPdf = $state(false);
 
+	// TTS options
+	let summarize = $state(false);
+
 	let token = $derived($page.params.token ?? '');
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -63,7 +66,7 @@
 		submitting = true;
 		error = '';
 		try {
-			await submitEpisode(token, submitUrl);
+			await submitEpisode(token, submitUrl, { summarize });
 			submitUrl = '';
 			await loadFeed();
 			startPolling();
@@ -79,7 +82,7 @@
 		uploadingPdf = true;
 		error = '';
 		try {
-			await uploadPdf(token, pdfFile, pdfTitle || undefined);
+			await uploadPdf(token, pdfFile, pdfTitle || undefined, { summarize });
 			pdfFile = null;
 			pdfTitle = '';
 			await loadFeed();
@@ -119,6 +122,17 @@
 		<button class="copy-btn" onclick={() => feed && copyToClipboard(feed.rss_url)}>
 			Copy RSS URL
 		</button>
+	</div>
+
+	<!-- TTS options -->
+	<div class="card mb-2">
+		<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+			<input type="checkbox" bind:checked={summarize} />
+			<span style="font-weight:500;">Summarize before TTS</span>
+		</label>
+		<p class="muted" style="font-size: 0.8rem; margin-top: 0.25rem;">
+			Condenses the text to ~20-30% before converting to speech.
+		</p>
 	</div>
 
 	<!-- URL submission -->
