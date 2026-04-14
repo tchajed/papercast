@@ -180,6 +180,7 @@ pub struct EpisodeSummary {
     pub error_msg: Option<String>,
     pub pub_date: Option<String>,
     pub created_at: String,
+    pub summarize: i32,
 }
 
 async fn get_feed(
@@ -195,7 +196,7 @@ async fn get_feed(
     let episodes = sqlx::query_as::<_, EpisodeSummary>(
         "SELECT id, title, source_url, source_type, status, audio_url, image_url,
                 duration_secs, word_count, tts_chunks_done, tts_chunks_total,
-                tts_provider, error_msg, pub_date, created_at
+                tts_provider, error_msg, pub_date, created_at, summarize
          FROM episodes WHERE feed_id = $1
          ORDER BY created_at DESC
          LIMIT 100",

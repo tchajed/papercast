@@ -35,6 +35,7 @@ export interface Episode {
 	error_msg: string | null;
 	pub_date: string | null;
 	created_at: string;
+	summarize: number;
 }
 
 export interface SubmitEpisodeResponse {
@@ -111,12 +112,13 @@ export async function uploadPdf(
 	feedToken: string,
 	file: File,
 	title?: string,
-	options?: { summarize?: boolean }
+	options?: { summarize?: boolean; sourceUrl?: string }
 ): Promise<SubmitEpisodeResponse> {
 	const formData = new FormData();
 	formData.append('file', file);
 	if (title) formData.append('title', title);
 	if (options?.summarize) formData.append('summarize', 'true');
+	if (options?.sourceUrl) formData.append('source_url', options.sourceUrl);
 
 	return apiFetch(`/api/v1/feeds/${feedToken}/episodes/pdf`, {
 		method: 'POST',

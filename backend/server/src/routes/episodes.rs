@@ -67,6 +67,7 @@ pub struct EpisodeResponse {
     pub error_msg: Option<String>,
     pub pub_date: Option<String>,
     pub created_at: String,
+    pub summarize: i32,
 }
 
 fn detect_source_type(url: &str) -> &'static str {
@@ -187,6 +188,7 @@ async fn upload_pdf(
     let mut pdf_bytes: Option<Vec<u8>> = None;
     let mut title: Option<String> = None;
     let mut tts_provider_field: Option<String> = None;
+    let mut source_url: Option<String> = None;
     let mut summarize = false;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
@@ -225,6 +227,15 @@ async fn upload_pdf(
                 let val = field.text().await.unwrap_or_default();
                 summarize = val == "true" || val == "1";
             }
+            "source_url" => {
+                let val = field.text().await.map_err(|e| {
+                    AppError::BadRequest(format!("Failed to read source_url: {e}"))
+                })?;
+                let trimmed = val.trim();
+                if !trimmed.is_empty() {
+                    source_url = Some(trimmed.to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -246,12 +257,13 @@ async fn upload_pdf(
     let mut tx = state.pool.begin().await?;
 
     sqlx::query(
-        "INSERT INTO episodes (id, feed_id, title, source_type, tts_provider, summarize, status)
-         VALUES ($1, $2, $3, 'pdf', $4, $5, 'pending')",
+        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, tts_provider, summarize, status)
+         VALUES ($1, $2, $3, $4, 'pdf', $5, $6, 'pending')",
     )
     .bind(&episode_id)
     .bind(&feed_id)
     .bind(&title)
+    .bind(&source_url)
     .bind(&tts_provider)
     .bind(summarize as i32)
     .execute(&mut *tx)
@@ -272,7 +284,7 @@ async fn upload_pdf(
         Json(SubmitEpisodeResponse {
             id: episode_id,
             status: "pending".into(),
-            source_url: None,
+            source_url,
             source_type: "pdf".into(),
         }),
     ))
@@ -287,7 +299,7 @@ async fn get_episode(
     let ep = sqlx::query_as::<_, EpisodeResponse>(
         "SELECT id, title, source_url, source_type, status, audio_url, image_url,
                 duration_secs, word_count, tts_chunks_done, tts_chunks_total,
-                tts_provider, error_msg, pub_date, created_at
+                tts_provider, error_msg, pub_date, created_at, summarize
          FROM episodes WHERE id = $1 AND feed_id = $2",
     )
     .bind(&episode_id)

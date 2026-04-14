@@ -18,6 +18,7 @@
 	// PDF upload
 	let pdfFile = $state<File | null>(null);
 	let pdfTitle = $state('');
+	let pdfSourceUrl = $state('');
 	let uploadingPdf = $state(false);
 
 	// TTS options
@@ -82,9 +83,13 @@
 		uploadingPdf = true;
 		error = '';
 		try {
-			await uploadPdf(token, pdfFile, pdfTitle || undefined, { summarize });
+			await uploadPdf(token, pdfFile, pdfTitle || undefined, {
+				summarize,
+				sourceUrl: pdfSourceUrl.trim() || undefined,
+			});
 			pdfFile = null;
 			pdfTitle = '';
+			pdfSourceUrl = '';
 			await loadFeed();
 			startPolling();
 		} catch (e) {
@@ -159,8 +164,15 @@
 			<div class="flex mb-1">
 				<input type="file" accept=".pdf" onchange={handleFileInput} disabled={uploadingPdf} />
 			</div>
-			<div class="flex">
+			<div class="flex mb-1">
 				<input bind:value={pdfTitle} placeholder="Title (optional)" disabled={uploadingPdf} />
+			</div>
+			<div class="flex">
+				<input
+					bind:value={pdfSourceUrl}
+					placeholder="Source URL (optional)"
+					disabled={uploadingPdf}
+				/>
 				<button type="submit" class="primary" disabled={uploadingPdf || !pdfFile}>
 					{uploadingPdf ? 'Uploading...' : 'Upload'}
 				</button>

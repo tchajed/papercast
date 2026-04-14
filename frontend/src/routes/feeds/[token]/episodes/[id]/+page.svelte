@@ -110,6 +110,10 @@
 				<td>{episode.source_type}</td>
 			</tr>
 			<tr>
+				<td class="muted" style="padding: 0.25rem 1rem 0.25rem 0;">Summarized</td>
+				<td>{episode.summarize ? 'yes' : 'no'}</td>
+			</tr>
+			<tr>
 				<td class="muted" style="padding: 0.25rem 1rem 0.25rem 0;">TTS Provider</td>
 				<td>{episode.tts_provider ?? '—'}</td>
 			</tr>
