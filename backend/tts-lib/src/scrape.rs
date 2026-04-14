@@ -59,7 +59,18 @@ async fn scrape_arxiv(client: &Client, url: &str) -> Result<(String, String)> {
     let html_resp = client.get(&ar5iv_url).send().await?.error_for_status()?;
     let html = html_resp.text().await?;
 
+    if html.contains("Conversion to HTML had a Fatal error") {
+        anyhow::bail!("ar5iv conversion failed for {arxiv_id}");
+    }
+
     let (_extracted_title, text) = extract_readable(&html, &ar5iv_url)?;
+
+    if text.trim().len() < 500 {
+        anyhow::bail!(
+            "ar5iv returned suspiciously short content ({} chars) for {arxiv_id}",
+            text.trim().len()
+        );
+    }
 
     Ok((title, text))
 }
