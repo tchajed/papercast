@@ -1,188 +1,225 @@
-# Deployment Plan
+# Deployment
 
-Everything runs in a single Fly.io app. No Vercel, no separate frontend hosting.
+The app runs as a single Fly.io machine: one Rust binary serving HTTP, a SQLite database on a mounted volume, and Litestream replicating that database to a Tigris (S3-compatible) bucket. The same bucket also holds generated audio and cover images. No Vercel, no separate frontend host.
 
-## Accounts Required
+This document covers both the one-time provisioning and the steady-state operations I need when redeploying or rotating credentials.
 
-1. **Fly.io** — Hosting, SQLite volume, Tigris storage
-   - Sign up at https://fly.io
-   - Install `flyctl`: `brew install flyctl` or `curl -L https://fly.io/install.sh | sh`
-   - Run `fly auth login`
+## Accounts and API Keys
 
-2. **Anthropic** — Claude API for text cleanup and PDF extraction
-   - API key from https://console.anthropic.com
+You need four external providers. Keep all keys in `.env` locally; `scripts/sync-secrets.sh push` copies them to Fly secrets.
 
-3. **Google Cloud** — Text-to-Speech
-   - API key from https://console.cloud.google.com/apis/credentials
-   - Enable the **Cloud Text-to-Speech API** on the project
+### 1. Fly.io — hosting, volume, Tigris bucket
 
-4. **Google AI Studio** — Gemini image generation
-   - API key from https://aistudio.google.com/apikey
+- Sign up at https://fly.io and install `flyctl`: `brew install flyctl` or `curl -L https://fly.io/install.sh | sh`.
+- Create a deploy token: `fly tokens create deploy -x 999999h` (or use the dashboard: **Tokens → Create access token**). Put it in `.env` as `FLY_API_TOKEN`; the `fly` CLI picks it up automatically, so you don't need an interactive `fly auth login` inside this repo.
+- Tigris (S3-compatible storage) is provisioned via `fly storage create` below; the credentials are auto-managed as Fly secrets.
 
-5. **Domain registrar** (optional) — For custom domain
-   - Any registrar works; Cloudflare recommended for free proxying
+### 2. Anthropic — Claude (article/PDF cleanup, PDF extraction, optional summarize)
 
-## Environment Setup
+- Go to https://console.anthropic.com/settings/keys.
+- **Create Key**, name it (e.g. `tts-podcast`), copy the `sk-ant-…` value.
+- Fund the workspace with some credit — the app uses Sonnet for articles and Opus for academic papers, which dominates per-episode cost.
+- Rotate: create a new key, update `ANTHROPIC_API_KEY` in `.env`, run `./scripts/sync-secrets.sh push`, then revoke the old key in the console.
 
-All secrets and config live in `.env` (gitignored). Copy the template and fill in your values:
+### 3. Google Cloud — Text-to-Speech
+
+- Create or pick a project at https://console.cloud.google.com.
+- Enable the **Cloud Text-to-Speech API**: https://console.cloud.google.com/apis/library/texttospeech.googleapis.com → **Enable**.
+- Create an API key: **APIs & Services → Credentials → Create credentials → API key**. Copy the `AIza…` value.
+- Restrict the key (recommended): **Edit → API restrictions → Restrict key → Cloud Text-to-Speech API**. Don't add an HTTP referrer restriction — the calls come from Fly, not a browser.
+- This is `GOOGLE_TTS_API_KEY`. Billing must be enabled on the project; Journey voices are paid.
+
+### 4. Google AI Studio — Gemini (cover art, optional clean/summarize provider)
+
+- Go to https://aistudio.google.com/apikey.
+- **Create API key** (can be in the same GCP project as TTS or a separate one). Copy the `AIza…` value.
+- This is `GOOGLE_STUDIO_API_KEY`. It's a distinct key from the TTS one — AI Studio and Cloud TTS use different API surfaces.
+- Image generation uses `gemini-2.5-flash-image`; the free tier is usually sufficient for personal use.
+
+### Admin token
+
+Generate one locally:
+
+```bash
+openssl rand -hex 32
+```
+
+Put the result in `.env` as `ADMIN_TOKEN`. This gates feed creation/deletion.
+
+## Environment File
+
+`.env.example` is the template. Copy it and fill in the real values:
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys
-# Generate an admin token: openssl rand -hex 32
-```
-
-Source it before running any commands (backend, `fly`, or the sync script):
-
-```bash
+# edit .env
 set -a; source .env; set +a
 ```
 
-The `.env` file includes `FLY_API_TOKEN`, which the `fly` CLI picks up automatically — no need for `fly auth login` in environments where you've set it.
+Variables fall into four buckets:
 
-To push API key secrets to Fly.io after setting them in `.env`:
+- **Fly CLI**: `FLY_API_TOKEN`.
+- **Tigris credentials** (filled in automatically after `fly storage create`): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`.
+- **Application secrets**: `ANTHROPIC_API_KEY`, `GOOGLE_TTS_API_KEY`, `GOOGLE_STUDIO_API_KEY`, `ADMIN_TOKEN`, `PUBLIC_URL`.
+- **Local-only / tunables**: `DATABASE_URL`, `HOST`, `PORT`, `GOOGLE_TTS_VOICE`, `WORKER_POLL_INTERVAL_SECS`, `MAX_JOB_ATTEMPTS`, `GENERATE_IMAGES`, `STATIC_DIR`.
+
+### scripts/sync-secrets.sh
 
 ```bash
-./scripts/sync-secrets.sh push    # pushes ANTHROPIC_API_KEY, GOOGLE_TTS_API_KEY, GOOGLE_STUDIO_API_KEY, ADMIN_TOKEN, PUBLIC_URL
-./scripts/sync-secrets.sh status  # shows what's set locally vs on Fly
+./scripts/sync-secrets.sh status   # show which keys are set locally vs on Fly
+./scripts/sync-secrets.sh push     # push app secrets from .env to Fly
 ```
 
-## Step-by-Step Deployment
+`push` only syncs the application secrets (`ANTHROPIC_API_KEY`, `GOOGLE_TTS_API_KEY`, `GOOGLE_STUDIO_API_KEY`, `ADMIN_TOKEN`, `PUBLIC_URL`). Tigris credentials are managed by `fly storage` and intentionally excluded. `DATABASE_URL` comes from `fly.toml`.
 
-### 1. Create the Fly.io App
+## First-Time Provisioning
+
+### 1. Create the Fly app
 
 ```bash
-cd tts-podcast
 fly launch --no-deploy
-# Choose a unique app name, e.g. "my-tts-podcast"
-# Select region (sjc recommended for US West)
 ```
 
-### 2. Create SQLite Volume
+Pick an app name and region (I use `sjc`). This writes/updates `fly.toml`. The existing `fly.toml` is set up for the `tchajed-podcast` app in `sjc` with a 512MB shared-CPU VM, auto-start/stop, and a `/data` volume mount.
+
+### 2. Create the SQLite volume
 
 ```bash
 fly volumes create podcast_data --region sjc --size 1
 ```
 
-### 3. Create Tigris Storage Bucket
+1 GB is plenty — the DB holds only metadata and text; audio goes to Tigris.
+
+### 3. Create the Tigris bucket
 
 ```bash
 fly storage create --public --name my-tts-podcast-audio
 ```
 
-This automatically sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `BUCKET_NAME`, and `AWS_REGION` as Fly secrets.
+`--public` is required because podcast clients fetch MP3s directly from the bucket URL. This sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, and `BUCKET_NAME` as Fly secrets and prints the same values so you can copy them into local `.env`.
 
-### 4. Set Secrets
+### 4. Push application secrets
 
 ```bash
-# Generate a random admin token
-ADMIN_TOKEN=$(openssl rand -hex 32)
-echo "Save this admin token: $ADMIN_TOKEN"
-
-fly secrets set \
-  ANTHROPIC_API_KEY="sk-ant-..." \
-  GOOGLE_TTS_API_KEY="AIza..." \
-  GOOGLE_STUDIO_API_KEY="AIza..." \
-  ADMIN_TOKEN="$ADMIN_TOKEN" \
-  PUBLIC_URL="https://my-tts-podcast.fly.dev"
+./scripts/sync-secrets.sh push
 ```
-
-Note: `DATABASE_URL` is set in `fly.toml` env section, not as a secret.
 
 ### 5. Deploy
 
 ```bash
-fly deploy
-```
-
-This builds a multi-stage Docker image (Bun builds frontend, Rust builds backend), adds Litestream, and deploys. Migrations run automatically on startup. Litestream begins backing up SQLite to Tigris immediately.
-
-**Troubleshooting remote builds:** `fly deploy` uses Depot for remote Docker builds, which connects via gRPC/TLS with SNI-based routing. This can hang indefinitely in environments that use HTTP CONNECT proxies (e.g., Docker sandboxes, corporate proxies). If `fly deploy` hangs at the builder provisioning step, use one of these workarounds:
-
-```bash
-# Build locally and push the image (requires local Docker)
-fly deploy --local-only
-
-# Or disable Depot and use Fly's own builders (slow first build ~20min, fast after)
 fly deploy --depot=false
 ```
 
-Note: The first build compiles all Rust dependencies from scratch (~20 min on the Fly remote builder). Subsequent deploys reuse the cached dependency layer via cargo-chef and only recompile app code (~2 min).
+`--depot=false` forces Fly's own builders instead of Depot's gRPC/SNI-based remote builder, which hangs in this environment. The first build compiles all Rust deps from scratch (~20 min); subsequent deploys reuse the cargo-chef dependency layer (~2 min).
 
-Verify:
+Alternative: `fly deploy --local-only` builds locally if you have Docker.
+
+The Dockerfile is multi-stage: Bun builds the SvelteKit static bundle, cargo-chef + Rust builds `tts-podcast-backend`, and the runtime image layers on `poppler-utils`, Litestream 0.5.11, and the static files. `start.sh` runs `litestream restore -if-replica-exists` on first boot, then `litestream replicate -exec /usr/local/bin/backend` so Litestream supervises the app process.
+
+### 6. Sanity checks
+
 ```bash
 curl https://my-tts-podcast.fly.dev/api/v1/feeds \
   -H "Authorization: Bearer $ADMIN_TOKEN"
-# Should return []
+# → []
 ```
 
-Visit `https://my-tts-podcast.fly.dev` in a browser — the SvelteKit UI should load.
+Visit `https://my-tts-podcast.fly.dev` — the SvelteKit UI should load.
 
-### 6. Create Your First Feed
+### 7. Create a feed
 
 ```bash
 curl -X POST https://my-tts-podcast.fly.dev/api/v1/feeds \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"slug": "reading-list", "title": "Reading List", "description": "Articles and papers"}'
+  -d '{"slug":"reading-list","title":"Reading List","description":"Articles and papers"}'
 ```
 
-The response includes a `feed_token` and `rss_url`. Add the RSS URL to your podcast client.
+The response has `feed_token` and `rss_url`. Paste the RSS URL into a podcast client.
 
-### 7. Submit a Test Episode
+### 8. Submit a test episode
 
 ```bash
-FEED_TOKEN="<feed_token from above>"
+FEED_TOKEN=<from above>
 
-# URL submission
 curl -X POST "https://my-tts-podcast.fly.dev/api/v1/feeds/$FEED_TOKEN/episodes" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://www.anthropic.com/engineering/managed-agents"}'
+  -d '{"url":"https://www.anthropic.com/engineering/managed-agents"}'
 
-# PDF upload
+# With summarization
+curl -X POST "https://my-tts-podcast.fly.dev/api/v1/feeds/$FEED_TOKEN/episodes" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://arxiv.org/abs/2401.03468","summarize":true}'
+
+# PDF upload (preserve source link)
 curl -X POST "https://my-tts-podcast.fly.dev/api/v1/feeds/$FEED_TOKEN/episodes/pdf" \
   -F "file=@paper.pdf" \
-  -F "title=My Paper"
+  -F "title=My Paper" \
+  -F "source_url=https://example.com/paper.pdf"
 ```
 
-## Custom Domain (Optional, Cloudflare)
+## Custom Domain (optional, via Cloudflare)
 
-1. Register a domain (or use existing one)
-2. Point nameservers to Cloudflare (free plan)
-3. Add DNS record: `CNAME podcast.yourdomain.com → my-tts-podcast.fly.dev` (proxied)
-4. Update `PUBLIC_URL`: `fly secrets set PUBLIC_URL=https://podcast.yourdomain.com`
+1. Point the domain's nameservers to Cloudflare.
+2. Add a `CNAME podcast.yourdomain.com → my-tts-podcast.fly.dev` (proxied, orange cloud).
+3. Update `PUBLIC_URL` in `.env` and push: `./scripts/sync-secrets.sh push`.
 
-Cloudflare proxying gives free TLS, DDoS protection, and edge caching of RSS feeds. No dedicated IPv4 needed — Fly's shared IPv4 + IPv6 work fine.
+Cloudflare gives free TLS, DDoS protection, and edge caching of the RSS feed. Fly's shared IPv4 + IPv6 are sufficient — no dedicated IP needed.
 
-## Cost Estimates
-
-| Component | Cost |
-|---|---|
-| Fly machine (512MB, auto-stop) | ~$3–5/mo |
-| Fly volume (1GB SQLite) | $0.15/mo |
-| Tigris (audio + images + Litestream) | ~$1–2/mo |
-| Shared IPv4 + IPv6 | Free |
-| **Infrastructure total** | **~$5–8/mo** |
-
-Per-episode costs:
-- Claude cleanup: $0.01–$1.50 (Sonnet for articles, Opus for papers)
-- PDF extraction: ~$0.20–0.60 per 20-page paper
-- TTS: ~$0.04 per 20K-char article (Google Cloud TTS)
-- Image generation: ~$0.04 per episode (Gemini)
-
-## Monitoring
+## Monitoring and Ops
 
 ```bash
-fly logs              # Stream backend logs
-fly status            # Check app health
-fly ssh console       # SSH into the VM
-fly volumes list      # Check volume status
+fly logs              # stream backend logs
+fly status            # machine health
+fly ssh console       # shell into the VM
+fly volumes list      # volume status
+fly secrets list      # what's currently set
 ```
+
+Inside the VM the SQLite DB is at `/data/podcast.db` and Litestream logs to stdout alongside the app.
 
 ## Disaster Recovery
 
-Litestream continuously streams the SQLite WAL to Tigris. To restore:
+Litestream streams the WAL to `s3://$BUCKET_NAME/litestream/podcast.db` continuously. To recover:
 
-1. Delete the volume (or create a new machine)
-2. `start.sh` automatically restores from the latest Litestream backup on first boot
-3. Audio files are independently stored in Tigris and unaffected
+1. Delete the machine (or recreate the volume).
+2. On first boot, `start.sh` runs `litestream restore -if-replica-exists /data/podcast.db`, which pulls the latest snapshot + WAL from Tigris.
+3. Audio and images are independently stored in the same bucket and aren't affected.
+
+Auto-stop can drop a few seconds of un-replicated WAL when a machine pauses. For a personal feed this is fine.
+
+## Updating
+
+Normal deploys:
+
+```bash
+git push            # if you use GitHub Actions, adjust as needed
+fly deploy --depot=false
+```
+
+Rotating an API key:
+
+1. Create a new key at the provider.
+2. Update `.env`.
+3. `./scripts/sync-secrets.sh push` (Fly restarts the machine automatically when secrets change).
+4. Revoke the old key.
+
+Rotating `ADMIN_TOKEN` does the same thing; any existing `feed_token`s continue to work (they're stored in the DB).
+
+## Cost
+
+Rough monthly steady state for personal use:
+
+| Component | Cost |
+|---|---|
+| Fly machine (512MB, auto-stop) | ~$3–5 |
+| Fly volume (1 GB) | ~$0.15 |
+| Tigris storage + egress | ~$1–2 |
+| **Infrastructure** | **~$5–8** |
+
+Per-episode variable costs:
+
+- Claude cleanup: $0.01–$1.50 (Sonnet cheap, Opus on long papers expensive).
+- Claude PDF extraction: ~$0.20–0.60 per 20-page paper.
+- Google TTS: ~$0.04 per 20k characters (Journey voices).
+- Gemini cover art: ~$0.04 per episode.

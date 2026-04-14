@@ -1,34 +1,46 @@
 # TTS Podcast
 
-A self-hosted web app that converts web articles, arXiv papers, and PDFs into podcast episodes. Submit URLs or upload PDFs via a web UI; the backend scrapes or extracts text, cleans it with Claude, synthesizes audio via TTS, generates cover art, and publishes to a private RSS feed for any podcast client.
+A self-hosted web app that turns web articles, arXiv papers, and PDFs into a private podcast feed. Submit a URL or upload a PDF; the backend scrapes or extracts the text, cleans it with an LLM, optionally summarizes it, synthesizes speech with Google Cloud TTS, generates cover art with Gemini, and publishes an RSS feed that any podcast client can subscribe to.
+
+There is no user login. Access is controlled by a per-feed secret token embedded in the RSS URL and API calls, plus an admin token for feed management.
+
+## Repository Layout
+
+```
+backend/          Rust workspace
+  tts-lib/          Shared library: providers (Claude/Gemini), TTS, scrape, PDF, cleanup, summarize
+  tts-cli/          Command-line tool for running the pipeline locally
+  server/           Axum HTTP server + background worker (the binary that ships)
+frontend/         SvelteKit (Svelte 5) SPA, built static and served by the backend
+scripts/          Helper scripts (sync-secrets.sh)
+Dockerfile        Multi-stage build (Bun frontend, cargo-chef backend, Litestream runtime)
+fly.toml          Fly.io app config
+litestream.yml    Continuous SQLite backup to Tigris (S3)
+start.sh          Runtime entrypoint: restore DB, run Litestream supervising the backend
+```
 
 ## Architecture
 
-- **Backend**: Rust (Axum) — API server + background worker + static file serving
-- **Frontend**: SvelteKit (static SPA, served by Axum)
-- **Database**: SQLite with WAL mode, backed up via Litestream to Tigris
-- **Storage**: Tigris (S3-compatible) for audio files, cover images, and DB backups
-- **Hosting**: Single Fly.io app (everything in one)
+- **Backend**: Rust / Axum. Single binary serving the API, the RSS feed, the SvelteKit static build, and running the job worker inline.
+- **Database**: SQLite on a Fly volume, WAL mode, embedded migrations.
+- **Backups**: Litestream replicates the SQLite WAL to Tigris continuously.
+- **Storage**: Tigris (S3-compatible) for audio MP3s, cover images, and DB backups.
+- **Hosting**: A single Fly.io app — no Vercel, no separate worker.
 
-## Quick Start (Local Development)
+## Local Development
 
 ### Prerequisites
 
-- Rust 1.75+
+- Rust 1.94+ (matches the Dockerfile)
 - Bun
-- API keys: Anthropic, Google (for TTS and Gemini image generation)
+- `poppler-utils` (for PDF handling)
+- API keys from Anthropic and Google (see [DEPLOYMENT.md](DEPLOYMENT.md) for how to obtain them)
 
 ### Setup
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys and credentials
-# Generate an admin token: openssl rand -hex 32
-```
-
-The `.env` file is gitignored. It also holds `FLY_API_TOKEN` for Fly.io CLI access. Source it before running anything:
-
-```bash
+# Fill in API keys and generate an admin token: openssl rand -hex 32
 set -a; source .env; set +a
 ```
 
@@ -36,51 +48,59 @@ set -a; source .env; set +a
 
 ```bash
 cd backend
-cargo run
+cargo run -p tts-podcast-backend
 ```
 
-The server starts on `http://localhost:8080`. It creates the SQLite database and runs migrations automatically.
+The server listens on `http://localhost:8080`, creates the SQLite database if missing, and runs migrations on startup.
 
 ### Frontend
 
 ```bash
 cd frontend
 bun install
-bun run build    # Build static files (served by backend)
-bun run dev      # Or run dev server on :5173 (set VITE_API_BASE_URL=http://localhost:8080)
+bun run dev      # dev server on :5173 — set VITE_API_BASE_URL=http://localhost:8080
+# or
+bun run build    # produces frontend/build, which the backend serves via STATIC_DIR
 ```
 
-## How It Works
+### CLI
 
-1. **Submit a URL** (article or arXiv paper) or **upload a PDF** via the web UI
-2. **Scrape/Extract**: Articles via readability; arXiv via ar5iv.org HTML; PDFs via Claude vision
-3. **Clean**: Claude removes navigation debris, converts equations to spoken English
-4. **TTS**: Google Cloud TTS converts cleaned text to MP3
-5. **Publish**: Audio uploaded to Tigris; episode appears in the RSS feed
-6. **Cover Art** (optional): Gemini generates a per-episode illustration
+The `tts-cli` crate runs the pipeline end-to-end without the server — handy for debugging cleanup prompts or trying a new provider against a single URL:
 
-Each stage runs as a background job with retry and exponential backoff.
+```bash
+cd backend
+cargo run -p tts-cli -- --help
+```
+
+## Pipeline Overview
+
+```
+URL  → scrape → clean → [summarize] → tts → done → image
+PDF  → pdf    → clean → [summarize] → tts → done → image
+```
+
+- **scrape**: readability for articles; arXiv API + ar5iv.org HTML for papers.
+- **pdf**: Claude vision reads the PDF as a document (handles two-column layouts).
+- **clean**: Claude (or Gemini, configurable) removes navigation junk, fixes encoding, rewrites equations as spoken English for academic sources.
+- **summarize** (optional, per-episode flag): LLM produces a shorter spoken version stored as `transcript`. If present, TTS uses this instead of the cleaned text.
+- **tts**: Google Cloud TTS, chunked at sentence boundaries, MP3 frames concatenated.
+- **image**: Gemini 2.5 Flash Image generates cover art from a short summary. Runs after the episode is already `done` — failures are non-fatal.
+
+Each stage is a job row with exponential-backoff retry.
 
 ## API
 
-See [DESIGN.md](DESIGN.md) for full API documentation.
+See [DESIGN.md](DESIGN.md) for the full surface. The useful endpoints:
 
-Key endpoints:
-- `POST /api/v1/feeds` — Create a feed (admin)
-- `GET /api/v1/feeds/:token` — Get feed + episodes (token is auth)
-- `POST /api/v1/feeds/:token/episodes` — Submit a URL
-- `POST /api/v1/feeds/:token/episodes/pdf` — Upload a PDF
-- `GET /feed/:token/rss.xml` — RSS feed for podcast clients
+- `POST /api/v1/feeds` — create a feed (admin)
+- `GET /api/v1/feeds/:token` — feed + episodes (token-auth)
+- `POST /api/v1/feeds/:token/episodes` — submit a URL. Body: `{ url, summarize?, tts_provider? }`
+- `POST /api/v1/feeds/:token/episodes/pdf` — upload a PDF (multipart; accepts `source_url` to preserve the original link)
+- `GET /feed/:token/rss.xml` — the RSS feed to hand to a podcast client
 
 ## Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for step-by-step instructions. Single Fly.io app — no Vercel or separate frontend hosting needed.
-
-## Test URLs
-
-- **Article**: https://www.anthropic.com/engineering/managed-agents
-- **arXiv (Nola)**: https://arxiv.org/abs/2401.03468
-- **arXiv (Spanner)**: look up on Google Scholar
+Everything runs on one Fly.io app with a mounted volume and a Tigris bucket. See [DEPLOYMENT.md](DEPLOYMENT.md) for the full setup, including how to create and rotate each API key.
 
 ## License
 
