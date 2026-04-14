@@ -161,7 +161,7 @@
 				<ScrollText size={14} />
 				{episode.summarize ? 'Full text' : 'Transcript'}
 			</button>
-			{#if transcript}
+			{#if episode.summarize}
 				<button class="flex" style="display: inline-flex;" onclick={() => openText('transcript')} disabled={loadingText}>
 					<FileText size={14} /> Transcript
 				</button>
