@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { listFeeds, createFeed, deleteFeed, updateFeed, regenerateFeedImage, type Feed } from '$lib/api';
+	import Toast from '$lib/Toast.svelte';
+	import { Plus, Rss, Pencil, ImagePlus, Trash2, Save, X } from 'lucide-svelte';
 
 	let adminToken = $state(localStorage.getItem('adminToken') ?? '');
 	let feeds = $state<Feed[]>([]);
@@ -99,8 +101,11 @@
 		}
 	}
 
+	let toastMessage = $state('');
+
 	function copyToClipboard(text: string) {
 		navigator.clipboard.writeText(text);
+		toastMessage = 'RSS URL copied to clipboard';
 	}
 
 	onMount(() => {
@@ -120,8 +125,12 @@
 	{:else}
 		<div class="flex-between mb-2">
 			<h2>Feeds</h2>
-			<button class="primary" onclick={() => showCreate = !showCreate}>
-				{showCreate ? 'Cancel' : 'New Feed'}
+			<button class="primary flex" style="display: inline-flex;" onclick={() => showCreate = !showCreate}>
+				{#if showCreate}
+					<X size={16} /> Cancel
+				{:else}
+					<Plus size={16} /> New Feed
+				{/if}
 			</button>
 		</div>
 
@@ -166,8 +175,8 @@
 							<input bind:value={editDescription} />
 						</div>
 						<div class="flex">
-							<button type="submit" class="primary">Save</button>
-							<button type="button" onclick={() => (editingToken = null)}>Cancel</button>
+							<button type="submit" class="primary flex" style="display: inline-flex;"><Save size={14} /> Save</button>
+							<button type="button" class="flex" style="display: inline-flex;" onclick={() => (editingToken = null)}><X size={14} /> Cancel</button>
 						</div>
 					</form>
 				{:else}
@@ -182,14 +191,16 @@
 							</div>
 						</div>
 						<div class="flex">
-							<button onclick={() => startEdit(feed)}>Edit</button>
+							<button class="flex" style="display: inline-flex;" onclick={() => startEdit(feed)}><Pencil size={14} /> Edit</button>
 							<button
+								class="flex" style="display: inline-flex;"
 								onclick={() => feed.feed_token && handleRegenerateImage(feed.feed_token)}
 								disabled={regenerating === feed.feed_token}
 							>
+								<ImagePlus size={14} />
 								{regenerating === feed.feed_token ? 'Generating…' : feed.image_url ? 'Regen image' : 'Gen image'}
 							</button>
-							<button class="danger" onclick={() => feed.feed_token && handleDelete(feed.feed_token)}>Delete</button>
+							<button class="danger flex" style="display: inline-flex;" onclick={() => feed.feed_token && handleDelete(feed.feed_token)}><Trash2 size={14} /> Delete</button>
 						</div>
 					</div>
 					{#if feed.description}
@@ -199,8 +210,8 @@
 						<span>{feed.episode_count ?? 0} episodes</span>
 						{#if feed.rss_url}
 							<span>&middot;</span>
-							<button class="copy-btn" onclick={() => feed.rss_url && copyToClipboard(feed.rss_url)}>
-								Copy RSS URL
+							<button class="copy-btn flex" style="display: inline-flex;" onclick={() => feed.rss_url && copyToClipboard(feed.rss_url)}>
+								<Rss size={12} /> Copy RSS URL
 							</button>
 						{/if}
 					</div>
@@ -211,3 +222,7 @@
 		{/each}
 	{/if}
 </div>
+
+{#if toastMessage}
+	<Toast message={toastMessage} onclose={() => toastMessage = ''} />
+{/if}

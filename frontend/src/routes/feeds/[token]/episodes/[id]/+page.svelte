@@ -3,6 +3,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { getEpisode, getEpisodeText, retryEpisode, formatDuration, type Episode } from '$lib/api';
 	import TextModal from '$lib/TextModal.svelte';
+	import { ArrowLeft, ExternalLink, FileUp, Clock, AlertCircle, RotateCcw, FileText, ScrollText } from 'lucide-svelte';
 
 	let episode = $state<Episode | null>(null);
 	let error = $state('');
@@ -76,7 +77,7 @@
 	}
 </script>
 
-<p class="mb-2"><a href="/feeds/{token}">&larr; Back to feed</a></p>
+<p class="mb-2"><a href="/feeds/{token}" class="flex" style="display: inline-flex; gap: 0.25rem;"><ArrowLeft size={16} /> Back to feed</a></p>
 
 {#if episode}
 	<div class="card">
@@ -129,18 +130,21 @@
 		</tbody></table>
 
 		{#if episode.retry_at}
-			<div class="mt-2" style="background: #fef3c7; padding: 0.75rem; border-radius: 6px; font-size: 0.875rem;">
+			<div class="mt-2 flex" style="background: #fef3c7; padding: 0.75rem; border-radius: 6px; font-size: 0.875rem;">
+				<Clock size={16} />
 				Waiting on retry at {new Date(episode.retry_at + 'Z').toLocaleString()}
 				(upstream service unavailable).
 			</div>
 		{/if}
 
 		{#if episode.status === 'error' && episode.error_msg}
-			<div class="mt-2" style="color: var(--danger); background: #fee2e2; padding: 0.75rem; border-radius: 6px;">
+			<div class="mt-2 flex" style="color: var(--danger); background: #fee2e2; padding: 0.75rem; border-radius: 6px;">
+				<AlertCircle size={16} />
 				<strong>Error:</strong> {episode.error_msg}
 			</div>
 			<div class="mt-2">
-				<button class="primary" onclick={handleRetry} disabled={retrying}>
+				<button class="primary flex" style="display: inline-flex;" onclick={handleRetry} disabled={retrying}>
+					<RotateCcw size={14} />
 					{retrying ? 'Retrying...' : 'Retry'}
 				</button>
 			</div>
@@ -153,12 +157,13 @@
 		{/if}
 
 		<div class="mt-2 flex" style="gap: 0.5rem;">
-			<button onclick={() => openText('cleaned')} disabled={loadingText}>
-				Cleaned Text
+			<button class="flex" style="display: inline-flex;" onclick={() => openText('cleaned')} disabled={loadingText}>
+				<ScrollText size={14} />
+				{episode.summarize ? 'Full text' : 'Transcript'}
 			</button>
 			{#if transcript}
-				<button onclick={() => openText('transcript')} disabled={loadingText}>
-					Transcript
+				<button class="flex" style="display: inline-flex;" onclick={() => openText('transcript')} disabled={loadingText}>
+					<FileText size={14} /> Transcript
 				</button>
 			{/if}
 			{#if loadingText}
@@ -173,7 +178,7 @@
 {/if}
 
 {#if showText === 'cleaned' && cleanedText}
-	<TextModal title="Cleaned Text" text={cleanedText} onclose={() => showText = false} />
+	<TextModal title={episode?.summarize ? 'Full Text' : 'Transcript'} text={cleanedText} onclose={() => showText = false} />
 {:else if showText === 'transcript' && transcript}
 	<TextModal title="Transcript" text={transcript} onclose={() => showText = false} />
 {/if}

@@ -9,7 +9,8 @@
 		type FeedWithEpisodes,
 		type Episode,
 	} from '$lib/api';
-	import { Search } from 'lucide-svelte';
+	import Toast from '$lib/Toast.svelte';
+	import { ArrowLeft, Rss, Link, FileUp, Plus, FileText, ExternalLink, Play, Clock, AlertCircle, RotateCcw, X } from 'lucide-svelte';
 
 	let feed = $state<FeedWithEpisodes | null>(null);
 	let error = $state('');
@@ -24,6 +25,9 @@
 
 	// TTS options
 	let summarize = $state(false);
+
+	// Toast
+	let toastMessage = $state('');
 
 	let token = $derived($page.params.token ?? '');
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -102,6 +106,7 @@
 
 	function copyToClipboard(text: string) {
 		navigator.clipboard.writeText(text);
+		toastMessage = 'RSS URL copied to clipboard';
 	}
 
 	function badgeClass(status: string): string {
@@ -118,7 +123,7 @@
 </script>
 
 {#if feed}
-	<p class="mb-2"><a href="/">&larr; All feeds</a></p>
+	<p class="mb-2"><a href="/" class="flex" style="display: inline-flex; gap: 0.25rem;"><ArrowLeft size={16} /> All feeds</a></p>
 
 	<!-- Feed info -->
 	<div class="card mb-2 feed-info">
@@ -131,8 +136,8 @@
 			Copy the RSS URL below and add it as a custom feed in your podcast app
 			(e.g., in Overcast: Library &rarr; <Search size={14} style="display:inline; vertical-align:middle;" /> &rarr; Add URL).
 		</p>
-		<button class="primary" onclick={() => feed && copyToClipboard(feed.rss_url)}>
-			Copy RSS URL
+		<button class="primary flex" style="display: inline-flex;" onclick={() => feed && copyToClipboard(feed.rss_url)}>
+			<Rss size={16} /> Copy RSS URL
 		</button>
 	</div>
 
@@ -146,14 +151,18 @@
 				handleSubmitUrl();
 			}
 		}}>
-			<h3 class="form-heading">Add a paper</h3>
+			<h3 class="form-heading flex" style="gap: 0.375rem;"><Plus size={18} /> Add a paper</h3>
 
 			<div class="mb-1">
-				<input
-					bind:value={submitUrl}
-					placeholder="Paste a URL (e.g. https://arxiv.org/abs/2301.07041)"
-					disabled={submitting || uploadingPdf}
-				/>
+				<div class="input-with-icon">
+					<Link size={16} class="input-icon" />
+					<input
+						bind:value={submitUrl}
+						placeholder="Paste a URL (e.g. https://arxiv.org/abs/2301.07041)"
+						disabled={submitting || uploadingPdf}
+						style="padding-left: 2.25rem;"
+					/>
+				</div>
 			</div>
 
 			<div class="mb-1">
@@ -166,13 +175,15 @@
 						class="file-input-hidden"
 					/>
 					{#if pdfFile}
+						<FileText size={16} />
 						<span class="file-drop-text">{pdfFile.name}</span>
 						<button
 							type="button"
 							class="file-remove"
 							onclick={(e) => { e.preventDefault(); pdfFile = null; pdfTitle = ''; pdfSourceUrl = ''; }}
-						>&times;</button>
+						><X size={14} /></button>
 					{:else}
+						<FileUp size={16} style="color: var(--text-muted);" />
 						<span class="file-drop-text muted">Or choose a PDF file</span>
 					{/if}
 				</label>
@@ -200,7 +211,7 @@
 					{#if submitting || uploadingPdf}
 						Adding...
 					{:else}
-						Add
+						<Plus size={16} /> Add
 					{/if}
 				</button>
 			</div>
@@ -229,24 +240,25 @@
 				</div>
 				<span class={badgeClass(ep.status)}>{ep.status}</span>
 			</div>
-			<div class="muted" style="font-size: 0.8rem;">
+			<div class="muted flex" style="font-size: 0.8rem;">
 				{#if ep.source_url}
+					<ExternalLink size={14} />
 					<a href={ep.source_url} target="_blank" rel="noopener">{ep.source_url}</a>
 				{:else}
-					PDF upload
+					<FileUp size={14} /> PDF upload
 				{/if}
 			</div>
 			{#if ep.description}
 				<p style="font-size: 0.9rem; margin-top: 0.5rem;">{ep.description}</p>
 			{/if}
 			{#if ep.retry_at}
-				<div style="font-size: 0.8rem; margin-top: 0.5rem; color: #92400e;">
-					⏳ Waiting on retry at {new Date(ep.retry_at + 'Z').toLocaleString()}
+				<div class="flex" style="font-size: 0.8rem; margin-top: 0.5rem; color: #92400e;">
+					<Clock size={14} /> Waiting on retry at {new Date(ep.retry_at + 'Z').toLocaleString()}
 				</div>
 			{/if}
 			{#if ep.status === 'error' && ep.error_msg}
-				<div style="color: var(--danger); font-size: 0.85rem; margin-top: 0.5rem;">
-					{ep.error_msg}
+				<div class="flex" style="color: var(--danger); font-size: 0.85rem; margin-top: 0.5rem;">
+					<AlertCircle size={14} /> {ep.error_msg}
 				</div>
 			{/if}
 			{#if ep.status === 'done' && ep.audio_url}
@@ -265,6 +277,10 @@
 	<p class="muted">Loading...</p>
 {/if}
 
+{#if toastMessage}
+	<Toast message={toastMessage} onclose={() => toastMessage = ''} />
+{/if}
+
 <style>
 	.feed-info h2 {
 		margin-bottom: 0.25rem;
@@ -276,10 +292,21 @@
 		margin-bottom: 0.75rem;
 	}
 
+	.input-with-icon {
+		position: relative;
+	}
+
+	.input-with-icon :global(.input-icon) {
+		position: absolute;
+		left: 0.75rem;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--text-muted);
+	}
+
 	.file-drop {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
-		justify-content: center;
 		gap: 0.5rem;
 		border: 1.5px dashed var(--border);
 		border-radius: 6px;
