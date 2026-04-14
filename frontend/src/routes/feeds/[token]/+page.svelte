@@ -119,64 +119,93 @@
 {#if feed}
 	<p class="mb-2"><a href="/">&larr; All feeds</a></p>
 
-	<div class="flex-between mb-2">
-		<div>
-			<h2>{feed.title}</h2>
-			<p class="muted">{feed.description}</p>
-		</div>
-		<button class="copy-btn" onclick={() => feed && copyToClipboard(feed.rss_url)}>
+	<!-- Feed info -->
+	<div class="card mb-2 feed-info">
+		<h2 style="margin-bottom: 0.5rem;">{feed.title}</h2>
+		{#if feed.description}
+			<p class="muted mb-1">{feed.description}</p>
+		{/if}
+		<p style="font-size: 0.875rem; margin-bottom: 0.75rem;">
+			This feed converts articles and papers to audio using text-to-speech.
+			Copy the RSS URL below and add it as a custom feed in your podcast app
+			(e.g., in Overcast: Library &rarr; Add URL).
+		</p>
+		<button class="primary" onclick={() => feed && copyToClipboard(feed.rss_url)}>
 			Copy RSS URL
 		</button>
 	</div>
 
-	<!-- TTS options -->
+	<!-- Unified submission form -->
 	<div class="card mb-2">
-		<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-			<input type="checkbox" bind:checked={summarize} />
-			<span style="font-weight:500;">Summarize before TTS</span>
-		</label>
-		<p class="muted" style="font-size: 0.8rem; margin-top: 0.25rem;">
-			Condenses the text to ~20-30% before converting to speech.
-		</p>
-	</div>
+		<form onsubmit={(e) => {
+			e.preventDefault();
+			if (pdfFile) {
+				handleUploadPdf();
+			} else {
+				handleSubmitUrl();
+			}
+		}}>
+			<h3 class="form-heading">Add a paper</h3>
 
-	<!-- URL submission -->
-	<div class="card mb-2">
-		<form onsubmit={(e) => { e.preventDefault(); handleSubmitUrl(); }}>
-			<label class="mb-1" style="display:block; font-weight:500;">Submit URL</label>
-			<div class="flex">
+			<div class="mb-1">
 				<input
 					bind:value={submitUrl}
-					placeholder="https://arxiv.org/abs/2301.07041 or article URL"
-					disabled={submitting}
+					placeholder="Paste a URL (e.g. https://arxiv.org/abs/2301.07041)"
+					disabled={submitting || uploadingPdf}
 				/>
-				<button type="submit" class="primary" disabled={submitting}>
-					{submitting ? 'Submitting...' : 'Submit'}
-				</button>
 			</div>
-		</form>
-	</div>
 
-	<!-- PDF upload -->
-	<div class="card mb-2">
-		<form onsubmit={(e) => { e.preventDefault(); handleUploadPdf(); }}>
-			<label class="mb-1" style="display:block; font-weight:500;">Upload PDF</label>
-			<div class="flex mb-1">
-				<input type="file" accept=".pdf" onchange={handleFileInput} disabled={uploadingPdf} />
+			<div class="mb-1">
+				<label class="file-drop" class:has-file={!!pdfFile}>
+					<input
+						type="file"
+						accept=".pdf"
+						onchange={handleFileInput}
+						disabled={submitting || uploadingPdf}
+						class="file-input-hidden"
+					/>
+					{#if pdfFile}
+						<span class="file-drop-text">{pdfFile.name}</span>
+						<button
+							type="button"
+							class="file-remove"
+							onclick={(e) => { e.preventDefault(); pdfFile = null; pdfTitle = ''; pdfSourceUrl = ''; }}
+						>&times;</button>
+					{:else}
+						<span class="file-drop-text muted">Or choose a PDF file</span>
+					{/if}
+				</label>
 			</div>
-			<div class="flex mb-1">
-				<input bind:value={pdfTitle} placeholder="Title (optional)" disabled={uploadingPdf} />
-			</div>
-			<div class="flex">
-				<input
-					bind:value={pdfSourceUrl}
-					placeholder="Source URL (optional)"
-					disabled={uploadingPdf}
-				/>
-				<button type="submit" class="primary" disabled={uploadingPdf || !pdfFile}>
-					{uploadingPdf ? 'Uploading...' : 'Upload'}
+
+			{#if pdfFile}
+				<div class="mb-1">
+					<input bind:value={pdfTitle} placeholder="Title (optional)" disabled={uploadingPdf} />
+				</div>
+				<div class="mb-1">
+					<input bind:value={pdfSourceUrl} placeholder="Source URL (optional)" disabled={uploadingPdf} />
+				</div>
+			{/if}
+
+			<div class="flex-between">
+				<label class="checkbox-label">
+					<input type="checkbox" bind:checked={summarize} />
+					<span>Summarize</span>
+				</label>
+				<button
+					type="submit"
+					class="primary"
+					disabled={submitting || uploadingPdf || (!submitUrl.trim() && !pdfFile)}
+				>
+					{#if submitting || uploadingPdf}
+						Adding...
+					{:else}
+						Add
+					{/if}
 				</button>
 			</div>
+			<p class="muted" style="font-size: 0.75rem; margin-top: 0.25rem;">
+				Summarize condenses the text to ~20-30% before converting to speech.
+			</p>
 		</form>
 	</div>
 
@@ -234,3 +263,68 @@
 {:else}
 	<p class="muted">Loading...</p>
 {/if}
+
+<style>
+	.feed-info h2 {
+		margin-bottom: 0.25rem;
+	}
+
+	.form-heading {
+		font-size: 1rem;
+		font-weight: 600;
+		margin-bottom: 0.75rem;
+	}
+
+	.file-drop {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		border: 1.5px dashed var(--border);
+		border-radius: 6px;
+		padding: 0.625rem 0.75rem;
+		cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
+	}
+
+	.file-drop:hover {
+		border-color: var(--primary);
+		background: rgba(37, 99, 235, 0.03);
+	}
+
+	.file-drop.has-file {
+		border-style: solid;
+		border-color: var(--primary);
+		background: rgba(37, 99, 235, 0.04);
+	}
+
+	.file-input-hidden {
+		display: none;
+	}
+
+	.file-drop-text {
+		font-size: 0.875rem;
+	}
+
+	.file-remove {
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		font-size: 1.1rem;
+		padding: 0 0.25rem;
+		line-height: 1;
+	}
+
+	.file-remove:hover {
+		color: var(--danger);
+	}
+
+	.checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		cursor: pointer;
+		font-size: 0.875rem;
+		font-weight: 500;
+	}
+</style>
