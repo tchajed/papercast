@@ -93,6 +93,11 @@ input, select, textarea {
 	outline: none;
 }
 
+input[type="checkbox"], input[type="radio"] {
+	width: auto;
+	padding: 0;
+}
+
 input:focus, select:focus {
 	border-color: var(--primary);
 	box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
