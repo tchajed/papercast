@@ -1,6 +1,8 @@
 pub mod claude;
 pub mod clean;
+pub mod describe;
 pub mod gemini;
+pub mod image;
 pub mod pdf;
 pub mod pdf_gemini;
 pub mod scrape;

@@ -51,6 +51,26 @@ enum Command {
         provider: String,
     },
 
+    /// Generate a short episode description from cleaned_text or transcript.
+    /// Reads JSON document from stdin; prints the description to stdout.
+    Describe {
+        /// Provider: claude or gemini
+        #[arg(long, default_value = "claude")]
+        provider: String,
+    },
+
+    /// Generate a cover image and write it to --output.
+    /// Reads JSON document from stdin (uses cleaned_text or transcript for the brief).
+    Image {
+        /// Output image file path (extension is chosen by mime type)
+        #[arg(short, long, default_value = "cover")]
+        output: String,
+
+        /// Provider to use for the visual summary step (claude or gemini)
+        #[arg(long, default_value = "claude")]
+        provider: String,
+    },
+
     /// Synthesize text to MP3 audio using Google Cloud TTS.
     /// Reads JSON document from stdin (needs cleaned_text or transcript).
     /// Writes MP3 to --output file.
@@ -175,6 +195,35 @@ async fn main() -> Result<()> {
             let provider = make_provider(&provider)?;
             let doc = tts_lib::summarize::summarize(&doc, &provider).await?;
             print_document(&doc)?;
+        }
+
+        Command::Describe { provider } => {
+            let doc = read_stdin_document()?;
+            let provider = make_provider(&provider)?;
+            let description = tts_lib::describe::describe(&doc, &provider).await?;
+            println!("{description}");
+        }
+
+        Command::Image { output, provider } => {
+            let doc = read_stdin_document()?;
+            let text = doc
+                .cleaned_text
+                .as_deref()
+                .or(doc.transcript.as_deref())
+                .context("No cleaned_text or transcript in input")?;
+            let provider = make_provider(&provider)?;
+            let summary = tts_lib::image::visual_summary(text, &provider).await?;
+            eprintln!("Visual brief: {summary}");
+            let image = tts_lib::image::generate_image(&google_studio_key()?, &summary).await?;
+            let ext = match image.mime_type.as_str() {
+                "image/png" => "png",
+                "image/jpeg" => "jpg",
+                "image/webp" => "webp",
+                _ => "bin",
+            };
+            let path = format!("{output}.{ext}");
+            tokio::fs::write(&path, &image.bytes).await?;
+            eprintln!("Wrote {path} ({} bytes, {})", image.bytes.len(), image.mime_type);
         }
 
         Command::Tts { output, voice } => {
