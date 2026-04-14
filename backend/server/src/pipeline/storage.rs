@@ -1,5 +1,6 @@
 use anyhow::Result;
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::ObjectCannedAcl;
 use aws_sdk_s3::Client;
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
@@ -52,6 +53,7 @@ impl StorageClient {
             .body(ByteStream::from(audio_bytes))
             .content_type("audio/mpeg")
             .cache_control("public, max-age=31536000, immutable")
+            .acl(ObjectCannedAcl::PublicRead)
             .send()
             .await?;
 
@@ -75,6 +77,7 @@ impl StorageClient {
             .body(ByteStream::from(image_bytes))
             .content_type("image/jpeg")
             .cache_control("public, max-age=31536000, immutable")
+            .acl(ObjectCannedAcl::PublicRead)
             .send()
             .await?;
 
