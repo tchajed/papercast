@@ -64,7 +64,7 @@ async fn scrape_arxiv(client: &Client, url: &str) -> Result<(String, String)> {
     Ok((title, text))
 }
 
-fn extract_arxiv_id(url: &str) -> Option<String> {
+pub fn extract_arxiv_id(url: &str) -> Option<String> {
     let patterns = ["arxiv.org/abs/", "ar5iv.org/abs/"];
     for pat in patterns {
         if let Some(idx) = url.find(pat) {
