@@ -307,7 +307,7 @@ async fn regenerate_feed_image(
         format!("{}. {}", feed.title, feed.description)
     };
 
-    let image = tts_lib::image::generate_image(
+    let image = tts_lib::image::generate_feed_cover(
         &state.config.google_studio_api_key,
         &brief,
     )

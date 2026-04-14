@@ -31,22 +31,59 @@ pub async fn visual_summary(text: &str, provider: &Provider) -> Result<String> {
     Ok(summary.trim().to_string())
 }
 
-/// Generate a cover image from a short visual-brief summary.
+/// Generate a cover image for a single podcast *episode* from a short
+/// visual-brief summary.
 pub async fn generate_image(
     google_api_key: &str,
     summary: &str,
 ) -> Result<GeneratedImage> {
-    generate_image_with_model(google_api_key, summary, DEFAULT_IMAGE_MODEL).await
+    let prompt = format!(
+        "Create a simple, clean illustration for a podcast episode about: {summary}. \
+         Minimal style, bold shapes, suitable as a podcast episode thumbnail at small sizes. \
+         No text or labels in the image. \
+         The image MUST be square (1:1 aspect ratio) with the subject centered — \
+         podcast artwork is displayed as a square, so keep all important content \
+         well inside the central square region."
+    );
+    generate_from_prompt(google_api_key, &prompt, DEFAULT_IMAGE_MODEL).await
 }
 
-pub async fn generate_image_with_model(
+/// Generate a cover image for a podcast *feed* (channel-level artwork).
+/// Channel covers are the first thing a listener sees in their library and
+/// persist across every episode, so they get a more considered prompt than
+/// per-episode thumbnails: stronger visual identity, richer composition,
+/// and explicit emphasis on legibility at small sizes.
+pub async fn generate_feed_cover(
     google_api_key: &str,
-    summary: &str,
-    model: &str,
+    brief: &str,
 ) -> Result<GeneratedImage> {
     let prompt = format!(
-        "Create a simple, clean illustration for a podcast episode about: {summary}. Minimal style, bold shapes, suitable as a podcast episode thumbnail at small sizes. No text or labels in the image."
+        "Design a distinctive cover image for a podcast feed titled and described as: {brief}.\n\n\
+         This is the channel-level artwork that listeners will see whenever they browse \
+         their podcast library, so it must have strong visual identity and read clearly at \
+         small sizes (down to ~55x55 pixels in a list view).\n\n\
+         Requirements:\n\
+         - Square (1:1 aspect ratio) with the subject well-centered. All important \
+           elements must sit inside the middle 80% of the square; nothing important near \
+           the edges. Podcast clients display this as a square and may crop further.\n\
+         - A single clear focal subject or symbol that represents the feed's theme. \
+           Avoid busy collages or multiple competing subjects.\n\
+         - Bold shapes, strong silhouette, high contrast between subject and background. \
+           Avoid thin lines and fine detail that will vanish when scaled down.\n\
+         - A cohesive, limited color palette (2-4 colors) that feels intentional and \
+           memorable.\n\
+         - Flat or lightly textured illustration style. Avoid photorealism, clutter, and \
+           gradients that muddy the image at small sizes.\n\
+         - Absolutely no text, letters, numbers, or logos anywhere in the image."
     );
+    generate_from_prompt(google_api_key, &prompt, DEFAULT_IMAGE_MODEL).await
+}
+
+async fn generate_from_prompt(
+    google_api_key: &str,
+    prompt: &str,
+    model: &str,
+) -> Result<GeneratedImage> {
 
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={google_api_key}"
@@ -84,8 +121,36 @@ pub async fn generate_image_with_model(
         .decode(image_b64)
         .context("Failed to decode Gemini image")?;
 
+    // Force a square aspect ratio: Gemini doesn't always honor the prompt and
+    // podcast clients (Overcast) silently reject non-square cover art.
+    let (cropped_bytes, final_mime) = center_crop_square(&image_bytes, &mime_type)?;
+
     Ok(GeneratedImage {
-        bytes: Bytes::from(image_bytes),
-        mime_type,
+        bytes: Bytes::from(cropped_bytes),
+        mime_type: final_mime,
     })
+}
+
+/// Decode, center-crop to a square, and re-encode. If the image is already
+/// square we skip the re-encode to avoid needless quality loss.
+fn center_crop_square(bytes: &[u8], mime_type: &str) -> Result<(Vec<u8>, String)> {
+    let mut img = image::load_from_memory(bytes).context("Failed to decode generated image")?;
+    let (w, h) = (img.width(), img.height());
+    if w == h {
+        return Ok((bytes.to_vec(), mime_type.to_string()));
+    }
+    let side = w.min(h);
+    let x = (w - side) / 2;
+    let y = (h - side) / 2;
+    let square = img.crop(x, y, side, side);
+
+    // Always emit PNG after a crop — it's lossless and matches the common case.
+    let mut out = std::io::Cursor::new(Vec::new());
+    square
+        .write_to(&mut out, image::ImageFormat::Png)
+        .context("Failed to encode cropped image")?;
+    tracing::info!(
+        "Center-cropped cover image from {w}x{h} to {side}x{side}"
+    );
+    Ok((out.into_inner(), "image/png".to_string()))
 }

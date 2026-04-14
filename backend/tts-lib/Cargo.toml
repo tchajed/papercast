@@ -16,3 +16,4 @@ readability = "0.3"
 url = "2"
 mp3-duration = "0.1"
 futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
