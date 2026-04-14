@@ -22,8 +22,8 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="modal-backdrop" onclick={onBackdropClick}>
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div class="modal-backdrop" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onclick={onBackdropClick}>
 	<div class="modal-content">
 		<div class="modal-header">
 			<h2 style="margin-bottom: 0;">{title}</h2>

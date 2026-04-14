@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import { getEpisode, getEpisodeText, retryEpisode, formatDuration, formatTimestamp, type Episode, type Section } from '$lib/api';
+	import { getEpisode, getEpisodeText, retryEpisode, formatDuration, formatTimestamp, episodeTitle, type Episode, type Section } from '$lib/api';
 	import TextModal from '$lib/TextModal.svelte';
 	import { ArrowLeft, ExternalLink, FileUp, Clock, AlertCircle, RotateCcw, FileText, ScrollText } from 'lucide-svelte';
 
@@ -115,7 +115,7 @@
 {#if episode}
 	<div class="card">
 		<div class="flex-between mb-1">
-			<h2>{episode.title}</h2>
+			<h2>{episodeTitle(episode)}</h2>
 			<span class={badgeClass(episode.status)}>{episode.status}</span>
 		</div>
 

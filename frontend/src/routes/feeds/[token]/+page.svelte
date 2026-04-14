@@ -6,6 +6,7 @@
 		submitEpisode,
 		uploadPdf,
 		formatDuration,
+		episodeTitle,
 		type FeedWithEpisodes,
 		type Episode,
 	} from '$lib/api';
@@ -242,7 +243,7 @@
 						<img src={ep.image_url} alt="" style="width:40px; height:40px; border-radius:4px; object-fit:cover;" />
 					{/if}
 					<a href="/feeds/{token}/episodes/{ep.id}">
-						<strong>{ep.title}</strong>
+						<strong>{episodeTitle(ep)}</strong>
 					</a>
 				</div>
 				<span class={badgeClass(ep.status)}>{ep.status}</span>

@@ -116,9 +116,9 @@
 <div>
 	{#if !loaded}
 		<div class="card">
-			<label class="mb-1" style="display:block; font-weight:500;">Admin Token</label>
+			<label class="mb-1" style="display:block; font-weight:500;" for="admin-token">Admin Token</label>
 			<div class="flex">
-				<input type="password" bind:value={adminToken} placeholder="Enter admin token" />
+				<input id="admin-token" type="password" bind:value={adminToken} placeholder="Enter admin token" />
 				<button class="primary" onclick={loadFeeds}>Load Feeds</button>
 			</div>
 		</div>
@@ -138,16 +138,19 @@
 			<div class="card mb-2">
 				<form onsubmit={(e) => { e.preventDefault(); handleCreate(); }}>
 					<div class="mb-1">
-						<label>Slug</label>
+						<label>Slug
 						<input bind:value={newSlug} placeholder="ml-papers" required />
+						</label>
 					</div>
 					<div class="mb-1">
-						<label>Title</label>
+						<label>Title
 						<input bind:value={newTitle} placeholder="ML Papers" required />
+						</label>
 					</div>
 					<div class="mb-1">
-						<label>Description</label>
+						<label>Description
 						<input bind:value={newDescription} placeholder="Optional description" />
+						</label>
 					</div>
 					<button type="submit" class="primary">Create Feed</button>
 				</form>
@@ -163,16 +166,19 @@
 				{#if editingToken === feed.feed_token}
 					<form onsubmit={(e) => { e.preventDefault(); handleEditSave(); }}>
 						<div class="mb-1">
-							<label>Slug</label>
+							<label>Slug
 							<input bind:value={editSlug} required />
+							</label>
 						</div>
 						<div class="mb-1">
-							<label>Title</label>
+							<label>Title
 							<input bind:value={editTitle} required />
+							</label>
 						</div>
 						<div class="mb-1">
-							<label>Description</label>
+							<label>Description
 							<input bind:value={editDescription} />
+							</label>
 						</div>
 						<div class="flex">
 							<button type="submit" class="primary flex" style="display: inline-flex;"><Save size={14} /> Save</button>

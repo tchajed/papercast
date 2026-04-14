@@ -144,6 +144,13 @@ input:focus, select:focus {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+
+.flex-between > .flex {
+	flex-wrap: wrap;
+	min-width: 0;
 }
 
 .mb-1 { margin-bottom: 0.5rem; }
@@ -160,4 +167,19 @@ input:focus, select:focus {
 
 .copy-btn:hover {
 	background: var(--border);
+}
+
+@media (max-width: 640px) {
+	.container {
+		padding: 1rem 0.75rem;
+	}
+
+	button {
+		padding: 0.4rem 0.6rem;
+		font-size: 0.8rem;
+	}
+
+	.flex-between > .flex {
+		flex: 1 1 auto;
+	}
 }

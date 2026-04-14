@@ -194,6 +194,10 @@ export async function retryEpisode(feedToken: string, episodeId: string): Promis
 	});
 }
 
+export function episodeTitle(ep: { title: string; summarize: number }): string {
+	return ep.summarize ? `${ep.title} (Summary)` : ep.title;
+}
+
 export function formatDuration(secs: number | null): string {
 	if (!secs) return '--:--';
 	const m = Math.floor(secs / 60);

@@ -38,6 +38,7 @@ struct RssEpisode {
     audio_bytes: Option<i64>,
     description: Option<String>,
     sections_json: Option<String>,
+    summarize: i32,
 }
 
 async fn rss_feed(
@@ -53,7 +54,7 @@ async fn rss_feed(
     .ok_or(AppError::NotFound)?;
 
     let episodes = sqlx::query_as::<_, RssEpisode>(
-        "SELECT id, title, source_url, audio_url, image_url, duration_secs, pub_date, audio_bytes, description, sections_json
+        "SELECT id, title, source_url, audio_url, image_url, duration_secs, pub_date, audio_bytes, description, sections_json, summarize
          FROM episodes
          WHERE feed_id = $1 AND status = 'done' AND audio_url IS NOT NULL
          ORDER BY pub_date DESC
@@ -116,7 +117,7 @@ async fn rss_feed(
       <itunes:duration>{duration}</itunes:duration>{image_tag}
     </item>
 "#,
-            title = xml_escape(&ep.title),
+            title = xml_escape(&display_title(&ep.title, ep.summarize)),
             id = ep.id,
             pub_date = pub_date,
             description = xml_escape(&description),
@@ -233,6 +234,14 @@ mod tests {
 
 /// Convert SQLite's `YYYY-MM-DD HH:MM:SS` (UTC) into RFC 2822 for RSS pubDate.
 /// Returns None if the input doesn't parse; callers should fall back to empty.
+fn display_title(title: &str, summarize: i32) -> String {
+    if summarize != 0 {
+        format!("{title} (Summary)")
+    } else {
+        title.to_string()
+    }
+}
+
 fn format_rfc2822(s: &str) -> Option<String> {
     let fmt = time::format_description::parse(
         "[year]-[month]-[day] [hour]:[minute]:[second]",

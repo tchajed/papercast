@@ -25,7 +25,7 @@ RUN cargo build --release -p tts-podcast-backend
 
 # Runtime stage
 FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y ca-certificates poppler-utils sqlite3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates poppler-utils sqlite3 procps && rm -rf /var/lib/apt/lists/*
 
 # Litestream for SQLite backup to Tigris
 ADD https://github.com/benbjohnson/litestream/releases/download/v0.5.11/litestream-0.5.11-linux-x86_64.tar.gz /tmp/
