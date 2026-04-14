@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { listFeeds, createFeed, deleteFeed, updateFeed, type Feed } from '$lib/api';
+	import { listFeeds, createFeed, deleteFeed, updateFeed, regenerateFeedImage, type Feed } from '$lib/api';
 
 	let adminToken = $state(localStorage.getItem('adminToken') ?? '');
 	let feeds = $state<Feed[]>([]);
@@ -71,6 +71,21 @@
 			await loadFeeds();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to update feed';
+		}
+	}
+
+	let regenerating = $state<string | null>(null);
+
+	async function handleRegenerateImage(token: string) {
+		try {
+			error = '';
+			regenerating = token;
+			await regenerateFeedImage(adminToken, token);
+			await loadFeeds();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to regenerate image';
+		} finally {
+			regenerating = null;
 		}
 	}
 
@@ -157,12 +172,23 @@
 					</form>
 				{:else}
 					<div class="flex-between">
-						<div>
-							<a href="/feeds/{feed.feed_token}"><strong>{feed.title}</strong></a>
-							<span class="muted">({feed.slug})</span>
+						<div class="flex" style="align-items: center;">
+							{#if feed.image_url}
+								<img src={feed.image_url} alt="" width="48" height="48" style="border-radius: 4px;" />
+							{/if}
+							<div>
+								<a href="/feeds/{feed.feed_token}"><strong>{feed.title}</strong></a>
+								<span class="muted">({feed.slug})</span>
+							</div>
 						</div>
 						<div class="flex">
 							<button onclick={() => startEdit(feed)}>Edit</button>
+							<button
+								onclick={() => feed.feed_token && handleRegenerateImage(feed.feed_token)}
+								disabled={regenerating === feed.feed_token}
+							>
+								{regenerating === feed.feed_token ? 'Generating…' : feed.image_url ? 'Regen image' : 'Gen image'}
+							</button>
 							<button class="danger" onclick={() => feed.feed_token && handleDelete(feed.feed_token)}>Delete</button>
 						</div>
 					</div>

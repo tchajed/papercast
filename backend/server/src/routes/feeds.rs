@@ -17,6 +17,10 @@ pub fn router() -> Router<AppState> {
             "/api/v1/feeds/{feed_token}",
             get(get_feed).delete(delete_feed).patch(update_feed),
         )
+        .route(
+            "/api/v1/feeds/{feed_token}/image",
+            post(regenerate_feed_image),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +53,7 @@ pub struct FeedRow {
     pub feed_token: String,
     pub tts_default: String,
     pub created_at: String,
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +66,7 @@ pub struct FeedResponse {
     pub tts_default: String,
     pub rss_url: String,
     pub created_at: String,
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -72,6 +78,7 @@ pub struct FeedListItem {
     pub feed_token: String,
     pub tts_default: String,
     pub created_at: String,
+    pub image_url: Option<String>,
     pub episode_count: i32,
 }
 
@@ -135,6 +142,7 @@ async fn create_feed(
             tts_default: row.tts_default,
             rss_url,
             created_at: row.created_at,
+            image_url: row.image_url,
         }),
     ))
 }
@@ -147,6 +155,7 @@ async fn list_feeds(
 
     let feeds = sqlx::query_as::<_, FeedListItem>(
         "SELECT f.id, f.slug, f.title, f.description, f.feed_token, f.tts_default, f.created_at,
+                f.image_url,
                 CAST(COUNT(e.id) AS INTEGER) as episode_count
          FROM feeds f
          LEFT JOIN episodes e ON e.feed_id = f.id
@@ -167,6 +176,7 @@ pub struct FeedWithEpisodes {
     pub description: String,
     pub tts_default: String,
     pub rss_url: String,
+    pub image_url: Option<String>,
     pub episodes: Vec<EpisodeSummary>,
 }
 
@@ -229,6 +239,7 @@ async fn get_feed(
         description: feed.description,
         tts_default: feed.tts_default,
         rss_url,
+        image_url: feed.image_url,
         episodes,
     }))
 }
@@ -272,6 +283,58 @@ async fn update_feed(
         tts_default: feed.tts_default,
         rss_url,
         created_at: feed.created_at,
+        image_url: feed.image_url,
+    }))
+}
+
+async fn regenerate_feed_image(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(feed_token): Path<String>,
+) -> AppResult<Json<FeedResponse>> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    let feed = sqlx::query_as::<_, FeedRow>("SELECT * FROM feeds WHERE feed_token = $1")
+        .bind(&feed_token)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let brief = if feed.description.trim().is_empty() {
+        feed.title.clone()
+    } else {
+        format!("{}. {}", feed.title, feed.description)
+    };
+
+    let image = tts_lib::image::generate_image(
+        &state.config.google_studio_api_key,
+        &brief,
+    )
+    .await?;
+
+    let image_url = state
+        .storage
+        .upload_feed_image(&feed.id, image.bytes, &image.mime_type)
+        .await?;
+
+    sqlx::query("UPDATE feeds SET image_url = $1 WHERE id = $2")
+        .bind(&image_url)
+        .bind(&feed.id)
+        .execute(&state.pool)
+        .await?;
+
+    let rss_url = format!("{}/feed/{}/rss.xml", state.config.public_url, feed.feed_token);
+
+    Ok(Json(FeedResponse {
+        id: feed.id,
+        slug: feed.slug,
+        title: feed.title,
+        description: feed.description,
+        feed_token: feed.feed_token,
+        tts_default: feed.tts_default,
+        rss_url,
+        created_at: feed.created_at,
+        image_url: Some(image_url),
     }))
 }
 

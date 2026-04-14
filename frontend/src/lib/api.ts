@@ -10,6 +10,7 @@ export interface Feed {
 	rss_url?: string;
 	created_at: string;
 	episode_count?: number;
+	image_url?: string | null;
 }
 
 export interface FeedWithEpisodes {
@@ -19,6 +20,7 @@ export interface FeedWithEpisodes {
 	description: string;
 	tts_default: string;
 	rss_url: string;
+	image_url?: string | null;
 	episodes: Episode[];
 }
 
@@ -95,6 +97,16 @@ export async function updateFeed(
 		method: 'PATCH',
 		headers: adminHeaders(adminToken),
 		body: JSON.stringify(data),
+	});
+}
+
+export async function regenerateFeedImage(
+	adminToken: string,
+	feedToken: string
+): Promise<Feed> {
+	return apiFetch(`/api/v1/feeds/${feedToken}/image`, {
+		method: 'POST',
+		headers: adminHeaders(adminToken),
 	});
 }
 

@@ -23,6 +23,7 @@ struct FeedInfo {
     title: String,
     description: String,
     feed_token: String,
+    image_url: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -43,7 +44,7 @@ async fn rss_feed(
     Path(feed_token): Path<String>,
 ) -> AppResult<impl IntoResponse> {
     let feed = sqlx::query_as::<_, FeedInfo>(
-        "SELECT id, title, description, feed_token FROM feeds WHERE feed_token = $1",
+        "SELECT id, title, description, feed_token, image_url FROM feeds WHERE feed_token = $1",
     )
     .bind(&feed_token)
     .fetch_optional(&state.pool)
@@ -111,9 +112,9 @@ async fn rss_feed(
         ));
     }
 
-    let channel_image_tag = episodes
-        .iter()
-        .find_map(|e| e.image_url.as_deref())
+    let channel_image_tag = feed
+        .image_url
+        .as_deref()
         .map(|img_url| {
             format!(
                 "\n    <itunes:image href=\"{url}\"/>\n    <image>\n      <url>{url}</url>\n      <title>{title}</title>\n      <link>{link}</link>\n    </image>",

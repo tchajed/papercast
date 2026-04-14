@@ -94,6 +94,37 @@ impl StorageClient {
         ))
     }
 
+    pub async fn upload_feed_image(
+        &self,
+        feed_id: &str,
+        image_bytes: Bytes,
+        mime_type: &str,
+    ) -> Result<String> {
+        let ext = match mime_type {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            _ => "bin",
+        };
+        // Hash content so each regenerated image gets a fresh URL (podcast
+        // clients aggressively cache channel images by URL).
+        let hash = hex::encode(&Sha256::digest(&image_bytes)[..8]);
+        let key = format!("feeds/{}/cover-{}.{}", feed_id, hash, ext);
+
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .body(ByteStream::from(image_bytes))
+            .content_type(mime_type)
+            .cache_control("public, max-age=31536000, immutable")
+            .acl(ObjectCannedAcl::PublicRead)
+            .send()
+            .await?;
+
+        Ok(format!("https://{}.t3.tigrisfiles.io/{}", self.bucket, key))
+    }
+
     pub async fn delete_object(&self, url: &str) -> Result<()> {
         let key = [
             format!("https://{}.t3.tigrisfiles.io/", self.bucket),
