@@ -16,3 +16,4 @@
 - Add API documentation, primarily for LLM consumption
 - The published/created times on the website still don't make sense to me, there's some time zone issue I suspect. Retry times do look correct.
 - Add a little audio boop between sections, the way AI Daily Brief does (but without copying their sound effect). Not sure where to get such a sound effect.
+- Fix the chapter timings. For Spanner these are definitely incorrect. Probably the text chunking isn't properly following the headings in the first place.
