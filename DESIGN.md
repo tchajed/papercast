@@ -75,10 +75,12 @@ SQLite with WAL mode. Migrations live in `backend/server/migrations/` and are em
 | word_count | INTEGER | Of the text that was spoken |
 | tts_provider | TEXT | Provider actually used |
 | tts_chunks_done / tts_chunks_total | INTEGER | Progress reporting |
-| status | TEXT | `pending` → `scraping`/`pdf` → `cleaning` → `summarizing` → `tts` → `image` → `done` (or `error`) |
+| status | TEXT | See state machine below. `pending`, `scraping`, `cleaning`, `summarizing`, `tts`, `done`, or `error` |
 | error_msg | TEXT | Last error |
 
 When `transcript` is non-null the TTS stage speaks it; otherwise it speaks `cleaned_text`.
+
+The API decorates each episode with a derived `retry_at` field — the `run_after` of the earliest `queued` job whose `run_after` is in the future. When set, the UI shows a "waiting on retry" banner. Episodes in this state keep their prior `status` (e.g. `scraping`) because the stage hasn't moved; `retry_at` is the signal that it's paused rather than actively working.
 
 ### `jobs`
 
@@ -91,7 +93,7 @@ When `transcript` is non-null the TTS stage speaks it; otherwise it speaks `clea
 | attempts | INTEGER | Retry count |
 | run_after | TEXT | ISO8601, for delayed retries |
 
-The worker runs jobs inline (no `spawn`) to avoid concurrent SQLite writers.
+The worker runs jobs inline (no `spawn`) to avoid concurrent SQLite writers. On startup, any job left in `running` (e.g. from a crash or deploy) is reset to `queued` so it's picked up again.
 
 ## API
 
@@ -125,19 +127,56 @@ Base path: `/api/v1`. Admin endpoints require `Authorization: Bearer $ADMIN_TOKE
 
 ## Processing Pipeline
 
-```
-URL  → scrape → clean → [summarize] → tts → done → image
-PDF  → pdf    → clean → [summarize] → tts → done → image
+### Episode state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> scraping: scrape/pdf job claimed
+    scraping --> cleaning: scrape or pdf job done
+    scraping --> scraping: arxiv ar5iv fallback\n(PDF download in-job)
+    cleaning --> summarizing: clean done, summarize=1
+    cleaning --> tts: clean done, summarize=0
+    summarizing --> tts: summarize done
+    tts --> done: tts done
+    done --> done: image job (non-fatal)
+    scraping --> error: permanent failure
+    cleaning --> error: permanent failure
+    summarizing --> error: permanent failure
+    tts --> error: permanent failure
+    error --> pending: POST /retry
 ```
 
-### Scrape
+Notes:
+- `scraping` covers both the `scrape` and `pdf` job types (one or the other is queued at submission, never both).
+- On submission: URL-based episodes enqueue a `scrape` job; PDF uploads enqueue a `pdf` job.
+- The `image` job runs after the episode is already `done`; its failure is logged but doesn't move the episode back to `error`.
+- Jobs in backoff (including 30min upstream-outage deferral) keep the episode in its current stage; the UI distinguishes "actively working" from "waiting on retry" via the derived `retry_at` field, not an episode status change.
 
-- **Articles**: HTTP GET → readability extraction, then light HTML-to-text.
+### Job state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> running: claim_next_job\n(status=queued, run_after≤now)
+    running --> done: stage fn Ok
+    running --> queued: recoverable failure\n(attempts < max, backoff)
+    running --> queued: upstream outage (503)\n(attempts unchanged, +30min)
+    running --> error: attempts ≥ max
+    running --> queued: worker restart\n(orphaned running → queued)
+```
+
+Standard retry backoff is exponential: 2, 4, 8, … minutes capped at `MAX_JOB_ATTEMPTS`. Errors matching an upstream-outage pattern (`503`, `service unavailable`, `overloaded`, `unavailable`) defer 30min and do **not** consume a retry attempt, so a long provider outage can't permanently fail an episode.
+
+### Scrape (URL sources)
+
+- **Articles**: HTTP GET → `readability` extraction, then light HTML-to-text.
 - **arXiv**: metadata from the arXiv API; body from `ar5iv.org` (LaTeX-rendered HTML), which preserves equation structure better than the PDF path.
+- **arXiv fallback**: ar5iv sometimes 200s with a "Conversion to HTML had a Fatal error" body, or returns suspiciously short content. Both cases are caught as errors. For `source_type = "arxiv"` the scrape stage then downloads `https://arxiv.org/pdf/{id}` to `/data/{episode_id}.pdf` and delegates to the PDF stage in-process, so the job completes as a scrape and the episode proceeds to `cleaning` normally.
 
 ### PDF
 
-The PDF bytes are sent to Claude as a document part. Claude returns text in reading order and handles two-column layouts. `poppler-utils` is installed in the runtime image for any ancillary PDF inspection. Pages blocked by the content filter are skipped rather than failing the job.
+PDFs come from two places: direct user uploads (`POST /episodes/pdf`, optionally with a `source_url`) and the arXiv fallback described above. The bytes are fed page-by-page to the configured extractor (`PDF_EXTRACTOR=gemini` by default; `claude` is the alternative). Pages blocked by the provider's content filter are skipped rather than failing the job. `poppler-utils` is installed in the runtime image for ancillary PDF inspection.
 
 ### Clean
 
@@ -162,7 +201,7 @@ Runs after the episode reaches `done`, so audio is available before the image. T
 
 ### Retries
 
-Failed jobs retry with exponential backoff (controlled by `MAX_JOB_ATTEMPTS`, default 3). After exhaustion the episode lands in `error` state and can be manually retried via the API.
+See the job state machine above. Transient failures retry with exponential backoff (capped by `MAX_JOB_ATTEMPTS`, default 3); upstream provider outages defer 30min without consuming an attempt; permanent failures move the episode to `error`, from which `POST /retry` re-queues it from the last successful stage.
 
 ## Frontend
 
@@ -178,7 +217,7 @@ All configuration is via environment variables. `.env.example` is the canonical 
 
 **Required**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `GOOGLE_TTS_API_KEY`, `GOOGLE_STUDIO_API_KEY`, `ADMIN_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `BUCKET_NAME`.
 
-**Optional**: `GOOGLE_TTS_VOICE`, `GENERATE_IMAGES`, `PUBLIC_URL`, `HOST`, `PORT`, `STATIC_DIR`, `WORKER_POLL_INTERVAL_SECS`, `MAX_JOB_ATTEMPTS`.
+**Optional**: `GOOGLE_TTS_VOICE`, `GENERATE_IMAGES`, `PUBLIC_URL`, `HOST`, `PORT`, `STATIC_DIR`, `WORKER_POLL_INTERVAL_SECS`, `MAX_JOB_ATTEMPTS`, `PDF_EXTRACTOR` (`gemini` default, `claude` alternative).
 
 ## Deployment
 
