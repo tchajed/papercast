@@ -72,7 +72,7 @@ pub async fn extract_with_model(
             let model = model.to_string();
             async move {
                 let is_first = i == 0;
-                let text = extract_chunk(&path, &api_key, &model, is_first)
+                let text = extract_chunk_cached(&path, &api_key, &model, is_first)
                     .await
                     .with_context(|| format!("Chunk starting at page {page_start}"))?;
                 Ok::<_, anyhow::Error>((page_start, text))
@@ -111,6 +111,42 @@ pub async fn extract_with_model(
         raw_text: Some(raw_text),
         ..Default::default()
     })
+}
+
+/// Remove any `*_chunks` working directories under `parent_dir` whose mtime is
+/// older than `max_age`. Used to GC per-chunk caches left behind by jobs that
+/// failed permanently before the success path could clean up.
+pub async fn gc_chunk_dirs(parent_dir: &str, max_age: std::time::Duration) {
+    let mut entries = match tokio::fs::read_dir(parent_dir).await {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("gc_chunk_dirs: cannot read {parent_dir}: {e}");
+            return;
+        }
+    };
+    let now = std::time::SystemTime::now();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else { continue };
+        if !name_str.ends_with("_chunks") {
+            continue;
+        }
+        let Ok(md) = entry.metadata().await else { continue };
+        if !md.is_dir() {
+            continue;
+        }
+        let mtime = md.modified().ok();
+        let age = mtime.and_then(|t| now.duration_since(t).ok());
+        if let Some(age) = age {
+            if age > max_age {
+                let path = entry.path();
+                tracing::info!("GC: removing old chunk dir {path:?} (age {age:?})");
+                if let Err(e) = tokio::fs::remove_dir_all(&path).await {
+                    tracing::warn!("GC failed to remove {path:?}: {e}");
+                }
+            }
+        }
+    }
 }
 
 async fn pdf_page_count(pdf_path: &str) -> Result<u32> {
@@ -175,6 +211,28 @@ async fn split_chunk(pdf_path: &str, first: u32, last: u32, out_path: &str) -> R
     Ok(())
 }
 
+fn cache_path_for(chunk_path: &str) -> String {
+    format!("{}.txt", chunk_path.trim_end_matches(".pdf"))
+}
+
+async fn extract_chunk_cached(
+    chunk_path: &str,
+    google_api_key: &str,
+    model: &str,
+    is_first: bool,
+) -> Result<String> {
+    let cache_path = cache_path_for(chunk_path);
+    if let Ok(cached) = tokio::fs::read_to_string(&cache_path).await {
+        tracing::info!("Reusing cached chunk extraction: {cache_path}");
+        return Ok(cached);
+    }
+    let text = extract_chunk(chunk_path, google_api_key, model, is_first).await?;
+    if let Err(e) = tokio::fs::write(&cache_path, &text).await {
+        tracing::warn!("Failed to write chunk cache {cache_path}: {e}");
+    }
+    Ok(text)
+}
+
 async fn extract_chunk(
     chunk_path: &str,
     google_api_key: &str,
@@ -217,19 +275,72 @@ async fn extract_chunk(
         model, google_api_key
     );
 
-    let resp = client.post(&url).json(&request).send().await?;
+    // Retry transient errors (5xx, 429, network). Short backoff — long backoffs
+    // (e.g. quota cooldowns) are handled at the job level, where the per-chunk
+    // cache lets sibling chunks' work survive across job retries.
+    let backoffs_ms = [0u64, 2_000, 8_000];
+    for (attempt, delay_ms) in backoffs_ms.iter().enumerate() {
+        if *delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+        }
+        match try_extract_chunk(&client, &url, &request).await {
+            Ok(text) => return Ok(text),
+            Err(ChunkError { transient, source }) => {
+                if !transient || attempt + 1 == backoffs_ms.len() {
+                    return Err(source);
+                }
+                tracing::warn!(
+                    "Gemini chunk attempt {} failed (transient): {source}",
+                    attempt + 1
+                );
+            }
+        }
+    }
+    unreachable!("retry loop returns on every branch")
+}
 
-    if !resp.status().is_success() {
-        let status = resp.status();
+struct ChunkError {
+    transient: bool,
+    source: anyhow::Error,
+}
+
+async fn try_extract_chunk(
+    client: &reqwest::Client,
+    url: &str,
+    request: &serde_json::Value,
+) -> std::result::Result<String, ChunkError> {
+    let resp = client
+        .post(url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|e| ChunkError {
+            transient: true,
+            source: anyhow::Error::new(e).context("Gemini request failed"),
+        })?;
+
+    let status = resp.status();
+    if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        bail!("Gemini API failed ({status}): {body}");
+        // 5xx and 429 are transient; 4xx (other) are permanent.
+        let transient = status.is_server_error() || status.as_u16() == 429;
+        return Err(ChunkError {
+            transient,
+            source: anyhow::anyhow!("Gemini API failed ({status}): {body}"),
+        });
     }
 
-    let body: serde_json::Value = resp.json().await?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| ChunkError {
+        transient: true,
+        source: anyhow::Error::new(e).context("Gemini response JSON parse failed"),
+    })?;
 
     let parts = body["candidates"][0]["content"]["parts"]
         .as_array()
-        .context("No parts in Gemini response")?;
+        .ok_or_else(|| ChunkError {
+            transient: false,
+            source: anyhow::anyhow!("No parts in Gemini response"),
+        })?;
 
     let text: String = parts
         .iter()
@@ -241,7 +352,10 @@ async fn extract_chunk(
         let finish_reason = body["candidates"][0]["finishReason"]
             .as_str()
             .unwrap_or("unknown");
-        bail!("Empty text from Gemini chunk (finishReason={finish_reason})");
+        return Err(ChunkError {
+            transient: false,
+            source: anyhow::anyhow!("Empty text from Gemini chunk (finishReason={finish_reason})"),
+        });
     }
 
     Ok(text)
