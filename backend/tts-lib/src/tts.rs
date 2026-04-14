@@ -8,7 +8,11 @@ use std::sync::Arc;
 
 const TTS_CONCURRENCY: usize = 4;
 const MAX_CHUNK_CHARS: usize = 4000;
-const SECTION_PAUSE_MS: u32 = 1500;
+
+/// 1.5s of silence (24 kHz mono MP3) appended between sections. Used instead
+/// of an SSML `<break>` because Journey voices (the default in production)
+/// reject SSML input entirely.
+const SECTION_SILENCE_MP3: &[u8] = include_bytes!("silence_1500ms.mp3");
 
 /// TTS configuration.
 pub struct TtsConfig {
@@ -54,7 +58,7 @@ struct Chunk {
     text: String,
     section_idx: usize,
     /// True if this is the final chunk of its section AND not the last section
-    /// overall — appends a pause after synthesis.
+    /// overall — a silent MP3 is appended after synthesis.
     append_pause: bool,
 }
 
@@ -106,7 +110,16 @@ pub async fn synthesize(
             async move {
                 let chunk_words = chunk.text.split_whitespace().count();
                 tracing::info!("TTS chunk {}/{} ({chunk_words} words)", i + 1, total_chunks);
-                let audio = tts_google(&client, config, &chunk.text, chunk.append_pause).await?;
+                let mut audio = tts_google(&client, config, &chunk.text).await?;
+                if chunk.append_pause {
+                    // Append a 1.5s silent MP3 segment so the chunk's measured
+                    // duration (and the running audio offset) includes the pause.
+                    let mut combined =
+                        Vec::with_capacity(audio.len() + SECTION_SILENCE_MP3.len());
+                    combined.extend_from_slice(&audio);
+                    combined.extend_from_slice(SECTION_SILENCE_MP3);
+                    audio = Bytes::from(combined);
+                }
                 let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
                 if let Some(ref cb) = on_progress {
                     cb(done, total_chunks);
@@ -316,29 +329,16 @@ async fn tts_google(
     client: &reqwest::Client,
     config: &TtsConfig,
     text: &str,
-    append_pause: bool,
 ) -> Result<Bytes> {
     let url = format!(
         "https://texttospeech.googleapis.com/v1/text:synthesize?key={}",
         config.google_api_key
     );
 
-    let input = if append_pause {
-        serde_json::json!({
-            "ssml": format!(
-                "<speak>{}<break time=\"{}ms\"/></speak>",
-                xml_escape(text),
-                SECTION_PAUSE_MS,
-            ),
-        })
-    } else {
-        serde_json::json!({ "text": text })
-    };
-
     let resp = client
         .post(&url)
         .json(&serde_json::json!({
-            "input": input,
+            "input": { "text": text },
             "voice": {
                 "languageCode": "en-US",
                 "name": config.voice,
@@ -360,14 +360,6 @@ async fn tts_google(
         .context("Failed to decode Google TTS audio")?;
 
     Ok(Bytes::from(audio_bytes))
-}
-
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 #[cfg(test)]
@@ -462,8 +454,4 @@ mod tests {
         assert_eq!(tl[1].start_secs, 10.0);
     }
 
-    #[test]
-    fn test_xml_escape() {
-        assert_eq!(xml_escape("a & b < c"), "a &amp; b &lt; c");
-    }
 }
