@@ -1,5 +1,15 @@
 # TTS Podcast
 
+> **TODO (2026-04-14):** Clean up the Tigris public-hostname handling.
+> During debugging we tried three hostnames (`fly.storage.tigris.dev`,
+> `t3.storage.dev`, `t3.tigrisfiles.io`) and churned on ACLs, bucket
+> policies, and the `--public` flag before landing on `t3.tigrisfiles.io`.
+> Confidence in the current code is low — see
+> [TIGRIS_INVESTIGATION.md](TIGRIS_INVESTIGATION.md) for the full log.
+> Open items: verify playback end-to-end, hoist the public hostname into
+> config, decide whether the `acl(public-read)` on uploads is actually
+> needed, and consider switching to presigned URLs.
+
 A self-hosted web app that turns web articles, arXiv papers, and PDFs into a private podcast feed. Submit a URL or upload a PDF; the backend scrapes or extracts the text, cleans it with an LLM, optionally summarizes it, synthesizes speech with Google Cloud TTS, generates cover art with Gemini, and publishes an RSS feed that any podcast client can subscribe to.
 
 There is no user login. Access is controlled by a per-feed secret token embedded in the RSS URL and API calls, plus an admin token for feed management.
