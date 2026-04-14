@@ -35,11 +35,11 @@ pub async fn run(
     let summary = generate_summary(&client, config, &cleaned_text).await?;
 
     // Step 2: Generate image via Gemini
-    let image_bytes = generate_image(&client, google_api_key, &summary).await?;
+    let image = generate_image(&client, google_api_key, &summary).await?;
 
     // Step 3: Upload to Tigris
     let image_url = storage
-        .upload_episode_image(episode_id, image_bytes)
+        .upload_episode_image(episode_id, image.bytes, &image.mime_type)
         .await?;
 
     // Step 4: Patch episode
@@ -100,18 +100,25 @@ async fn generate_summary(
         .unwrap_or_default())
 }
 
+pub struct GeneratedImage {
+    pub bytes: Bytes,
+    pub mime_type: String,
+}
+
 async fn generate_image(
     client: &reqwest::Client,
     api_key: &str,
     summary: &str,
-) -> Result<Bytes> {
+) -> Result<GeneratedImage> {
     let prompt = format!(
         "Create a simple, clean illustration for a podcast episode about: {}. Minimal style, bold shapes, suitable as a podcast episode thumbnail at small sizes. No text or labels in the image.",
         summary
     );
 
+    // gemini-2.5-flash-image (aka "Nano Banana") is the image-generating
+    // variant; plain gemini-2.5-flash does not return image parts.
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key={}",
         api_key
     );
 
@@ -124,23 +131,34 @@ async fn generate_image(
         }
     });
 
-    let resp = client
-        .post(&url)
-        .json(&request)
-        .send()
-        .await?
-        .error_for_status()
-        .context("Gemini image generation failed")?;
-
+    let resp = client.post(&url).json(&request).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Gemini image generation failed ({status}): {body}");
+    }
     let body: serde_json::Value = resp.json().await?;
 
-    let image_b64 = body["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
+    let inline = body["candidates"][0]["content"]["parts"]
+        .as_array()
+        .and_then(|parts| parts.iter().find(|p| p.get("inlineData").is_some()))
+        .and_then(|p| p.get("inlineData"))
+        .context("No inlineData image part in Gemini response")?;
+
+    let image_b64 = inline["data"]
         .as_str()
         .context("No image data in Gemini response")?;
+    let mime_type = inline["mimeType"]
+        .as_str()
+        .unwrap_or("image/png")
+        .to_string();
 
     let image_bytes = base64::engine::general_purpose::STANDARD
         .decode(image_b64)
         .context("Failed to decode Gemini image")?;
 
-    Ok(Bytes::from(image_bytes))
+    Ok(GeneratedImage {
+        bytes: Bytes::from(image_bytes),
+        mime_type,
+    })
 }

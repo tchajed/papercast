@@ -67,15 +67,22 @@ impl StorageClient {
         &self,
         episode_id: &str,
         image_bytes: Bytes,
+        mime_type: &str,
     ) -> Result<String> {
-        let key = format!("episodes/{}/cover.jpg", episode_id);
+        let ext = match mime_type {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            _ => "bin",
+        };
+        let key = format!("episodes/{}/cover.{}", episode_id, ext);
 
         self.client
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
             .body(ByteStream::from(image_bytes))
-            .content_type("image/jpeg")
+            .content_type(mime_type)
             .cache_control("public, max-age=31536000, immutable")
             .acl(ObjectCannedAcl::PublicRead)
             .send()
