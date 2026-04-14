@@ -35,6 +35,7 @@ struct RssEpisode {
     duration_secs: Option<i32>,
     pub_date: Option<String>,
     audio_bytes: Option<i64>,
+    description: Option<String>,
 }
 
 async fn rss_feed(
@@ -50,7 +51,7 @@ async fn rss_feed(
     .ok_or(AppError::NotFound)?;
 
     let episodes = sqlx::query_as::<_, RssEpisode>(
-        "SELECT id, title, source_url, audio_url, image_url, duration_secs, pub_date, audio_bytes
+        "SELECT id, title, source_url, audio_url, image_url, duration_secs, pub_date, audio_bytes, description
          FROM episodes
          WHERE feed_id = $1 AND status = 'done' AND audio_url IS NOT NULL
          ORDER BY pub_date DESC
@@ -76,9 +77,9 @@ async fn rss_feed(
         let audio_url = ep.audio_url.as_deref().unwrap_or("");
         let length = ep.audio_bytes.unwrap_or(0);
         let description = ep
-            .source_url
+            .description
             .as_deref()
-            .unwrap_or("PDF upload");
+            .unwrap_or_else(|| ep.source_url.as_deref().unwrap_or("PDF upload"));
 
         let image_tag = if let Some(ref img_url) = ep.image_url {
             format!(

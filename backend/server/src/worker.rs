@@ -76,8 +76,8 @@ async fn execute_job(job: Job, pool: &SqlitePool, config: &AppConfig, storage: &
         job.attempts + 1
     );
 
-    // Update episode status to reflect current stage (except image — status stays 'done')
-    if job.job_type != "image" {
+    // Update episode status to reflect current stage (except image/describe — status stays 'done')
+    if job.job_type != "image" && job.job_type != "describe" {
         let stage_status = match job.job_type.as_str() {
             "scrape" | "pdf" => "scraping",
             "clean" => "cleaning",
@@ -104,6 +104,7 @@ async fn execute_job(job: Job, pool: &SqlitePool, config: &AppConfig, storage: &
         "summarize" => crate::pipeline::summarize::run(&job.episode_id, pool, config).await,
         "tts" => crate::pipeline::tts::run(&job.episode_id, pool, config, storage).await,
         "image" => crate::pipeline::image::run(&job.episode_id, pool, config, storage).await,
+        "describe" => crate::pipeline::describe::run(&job.episode_id, pool, config).await,
         other => Err(anyhow::anyhow!("Unknown job type: {other}")),
     };
 
@@ -115,10 +116,10 @@ async fn execute_job(job: Job, pool: &SqlitePool, config: &AppConfig, storage: &
         }
         Err(e) => {
             tracing::error!("Job {} failed: {e:?}", job.id);
-            // Image failures are non-fatal
-            let is_image = job.job_type == "image";
+            // Image and describe failures are non-fatal
+            let non_fatal = matches!(job.job_type.as_str(), "image" | "describe");
             if let Err(e2) =
-                fail_job(pool, &job, &e.to_string(), config.max_job_attempts, is_image).await
+                fail_job(pool, &job, &e.to_string(), config.max_job_attempts, non_fatal).await
             {
                 tracing::error!("Failed to record job failure {}: {e2}", job.id);
             }
@@ -221,7 +222,17 @@ async fn complete_job(pool: &SqlitePool, job: &Job, config: &AppConfig) -> Resul
                 .execute(&mut *tx)
                 .await?;
             }
+
+            let describe_id = new_id();
+            sqlx::query(
+                "INSERT INTO jobs (id, episode_id, job_type, status) VALUES ($1, $2, 'describe', 'queued')",
+            )
+            .bind(&describe_id)
+            .bind(&job.episode_id)
+            .execute(&mut *tx)
+            .await?;
         }
+        "describe" => {}
         "image" => {
             // Image done — episode.image_url was already patched by the image stage
             // Status stays 'done', no new job
@@ -256,7 +267,7 @@ async fn fail_job(
     job: &Job,
     error_msg: &str,
     max_attempts: i32,
-    is_image: bool,
+    non_fatal: bool,
 ) -> Result<()> {
     // For upstream provider outages, defer 30min without consuming an attempt.
     if is_upstream_outage(error_msg) {
@@ -305,8 +316,8 @@ async fn fail_job(
             .execute(&mut *tx)
             .await?;
 
-        // Image failures don't set episode to error
-        if !is_image {
+        // Image/describe failures don't set episode to error
+        if !non_fatal {
             sqlx::query("UPDATE episodes SET status = 'error', error_msg = $1 WHERE id = $2")
                 .bind(error_msg)
                 .bind(&job.episode_id)
