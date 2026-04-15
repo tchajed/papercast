@@ -192,9 +192,9 @@
 				</form>
 			{/if}
 
-			<div class="flex justify-between items-center flex-wrap gap-2 mb-2">
-				<h2 class="text-xl font-semibold">{episodeTitle(episode)}</h2>
-				<span class={badgeClass(episode.status)}>
+			<div class="flex justify-between items-center gap-2 mb-2">
+				<h2 class="text-xl font-semibold min-w-0">{episodeTitle(episode)}</h2>
+				<span class="{badgeClass(episode.status)} shrink-0">
 					{episode.status}{#if episode.tts_chunks_total > 0 && episode.status !== 'done' && episode.status !== 'error'}&nbsp;· {episode.tts_chunks_done}/{episode.tts_chunks_total}{/if}
 				</span>
 			</div>

@@ -259,16 +259,16 @@
 	{#each feed.episodes as ep}
 		<div class="card bg-base-100 shadow-sm border border-base-300 mb-3">
 			<div class="card-body p-4">
-				<div class="flex justify-between items-center flex-wrap gap-2 mb-1">
-					<div class="flex items-center gap-2">
+				<div class="flex justify-between items-center gap-2 mb-1">
+					<div class="flex items-center gap-2 min-w-0">
 						{#if ep.image_url}
-							<img src={ep.image_url} alt="" class="w-10 h-10 rounded object-cover" />
+							<img src={ep.image_url} alt="" class="w-10 h-10 rounded object-cover shrink-0" />
 						{/if}
 						<a href="/feeds/{token}/episodes/{ep.id}" class="font-semibold link">
 							{episodeTitle(ep)}
 						</a>
 					</div>
-					<span class={badgeClass(ep.status)}>
+					<span class="{badgeClass(ep.status)} shrink-0">
 						{ep.status}{#if ep.tts_chunks_total > 0 && ep.status !== 'done' && ep.status !== 'error'}&nbsp;· {ep.tts_chunks_done}/{ep.tts_chunks_total}{/if}
 					</span>
 				</div>
