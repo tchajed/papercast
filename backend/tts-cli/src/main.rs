@@ -222,8 +222,10 @@ async fn main() -> Result<()> {
         Command::Clean { provider } => {
             let doc = read_stdin_document()?;
             let provider = make_provider(&provider)?;
-            let (doc, usage) = tts_lib::clean::clean(&doc, &provider).await?;
-            eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
+            let (doc, usages) = tts_lib::clean::clean(&doc, &provider).await?;
+            for usage in &usages {
+                eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
+            }
             print_document(&doc)?;
         }
 
@@ -321,7 +323,7 @@ async fn main() -> Result<()> {
 
             // Stage 2: Clean
             eprintln!("--- Clean ---");
-            let (new_doc, _clean_usage) = tts_lib::clean::clean(&doc, &provider).await?;
+            let (new_doc, _clean_usages) = tts_lib::clean::clean(&doc, &provider).await?;
             doc = new_doc;
             eprintln!(
                 "Cleaned text: {} words",

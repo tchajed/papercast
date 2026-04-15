@@ -14,8 +14,23 @@ pub struct Request {
     pub max_tokens: u32,
     pub temperature: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system: Option<String>,
+    pub system: Option<Vec<SystemBlock>>,
     pub messages: Vec<Message>,
+}
+
+#[derive(Serialize)]
+pub struct SystemBlock {
+    #[serde(rename = "type")]
+    pub block_type: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
+}
+
+#[derive(Serialize)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub ty: String,
 }
 
 #[derive(Serialize)]
@@ -80,6 +95,9 @@ impl Response {
 }
 
 /// Send a simple text-in/text-out request to Claude. Returns text + usage.
+/// When `cache_system` is true and a system prompt is present, it is marked
+/// with `cache_control: ephemeral` so repeated calls with the same system
+/// prompt are billed at ~10% of input cost on cache hit.
 pub async fn chat(
     client: &reqwest::Client,
     api_key: &str,
@@ -87,12 +105,22 @@ pub async fn chat(
     system: Option<&str>,
     user_message: &str,
     max_tokens: u32,
+    cache_system: bool,
 ) -> Result<crate::ChatResult> {
+    let system_blocks = system.map(|s| {
+        vec![SystemBlock {
+            block_type: "text".to_string(),
+            text: s.to_string(),
+            cache_control: cache_system.then(|| CacheControl {
+                ty: "ephemeral".to_string(),
+            }),
+        }]
+    });
     let request = Request {
         model: model.to_string(),
         max_tokens,
         temperature: 0.0,
-        system: system.map(|s| s.to_string()),
+        system: system_blocks,
         messages: vec![Message {
             role: "user".to_string(),
             content: MessageContent::Text(user_message.to_string()),

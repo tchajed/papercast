@@ -205,7 +205,11 @@ async fn extract_page(
         model: "claude-sonnet-4-6".to_string(),
         max_tokens: 4096,
         temperature: 0.0,
-        system: Some(PDF_SYSTEM_PROMPT.to_string()),
+        system: Some(vec![claude::SystemBlock {
+            block_type: "text".to_string(),
+            text: PDF_SYSTEM_PROMPT.to_string(),
+            cache_control: None,
+        }]),
         messages: vec![claude::Message {
             role: "user".to_string(),
             content: claude::MessageContent::Blocks(vec![
@@ -282,6 +286,7 @@ async fn extract_title(
             snippet
         ),
         100,
+        false,
     )
     .await?;
     Ok((result.text.trim().to_string(), result.usage))

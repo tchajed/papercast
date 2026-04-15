@@ -56,9 +56,23 @@ impl Provider {
         user_message: &str,
         max_output_tokens: u32,
     ) -> anyhow::Result<ChatResult> {
+        self.chat_opts(client, claude_model, system, user_message, max_output_tokens, false).await
+    }
+
+    /// Like `chat`, but with opt-in system-prompt caching (Claude only; Gemini
+    /// ignores the flag). Use when the same system prompt is sent repeatedly.
+    pub async fn chat_opts(
+        &self,
+        client: &reqwest::Client,
+        claude_model: &str,
+        system: Option<&str>,
+        user_message: &str,
+        max_output_tokens: u32,
+        cache_system: bool,
+    ) -> anyhow::Result<ChatResult> {
         match self {
             Provider::Claude { api_key } => {
-                claude::chat(client, api_key, claude_model, system, user_message, max_output_tokens).await
+                claude::chat(client, api_key, claude_model, system, user_message, max_output_tokens, cache_system).await
             }
             Provider::Gemini { api_key, model } => {
                 gemini::chat(client, api_key, model, system, user_message, max_output_tokens).await

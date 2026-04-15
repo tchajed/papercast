@@ -27,10 +27,10 @@ pub async fn run(
     };
 
     let provider = config.make_provider();
-    let (doc, usage) = tts_lib::clean::clean(&input_doc, &provider)
+    let (doc, usages) = tts_lib::clean::clean(&input_doc, &provider)
         .await
         .with_context(|| format!("Clean failed for episode {episode_id}"))?;
-    crate::usage::record(pool, Some(episode_id), None, "clean", &usage).await;
+    crate::usage::record_many(pool, Some(episode_id), None, "clean", &usages).await;
 
     let cleaned_text = doc
         .cleaned_text
