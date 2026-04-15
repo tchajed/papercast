@@ -3,6 +3,7 @@ use base64::Engine;
 use bytes::Bytes;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -72,6 +73,7 @@ pub async fn synthesize(
     text: &str,
     config: &TtsConfig,
     on_progress: Option<ProgressCallback>,
+    cache_dir: Option<String>,
 ) -> Result<TtsResult> {
     let sections_text = parse_sections(text);
     let has_sections = !sections_text.is_empty() && sections_text.iter().any(|s| s.title.is_some());
@@ -101,15 +103,58 @@ pub async fn synthesize(
     let completed = Arc::new(AtomicUsize::new(0));
     let on_progress = on_progress.clone();
 
+    if let Some(ref dir) = cache_dir {
+        if let Err(e) = tokio::fs::create_dir_all(dir).await {
+            tracing::warn!("Failed to create TTS chunk cache dir {dir}: {e}");
+        }
+    }
+
     let results: Vec<Result<(usize, Bytes, f64)>> = stream::iter(chunks.into_iter().enumerate())
         .map(|(i, chunk)| {
             let client = client.clone();
             let completed = completed.clone();
             let on_progress = on_progress.clone();
+            let cache_dir = cache_dir.clone();
             async move {
                 let chunk_words = chunk.text.split_whitespace().count();
-                tracing::info!("TTS chunk {}/{} ({chunk_words} words)", i + 1, total_chunks);
-                let audio = tts_google(&client, config, &chunk.text).await?;
+                let cache_path = cache_dir.as_ref().map(|d| {
+                    format!("{}/{}", d, chunk_cache_filename(i, &chunk.text, &config.voice))
+                });
+                let audio = if let Some(ref p) = cache_path {
+                    match tokio::fs::read(p).await {
+                        Ok(bytes) => {
+                            tracing::info!(
+                                "TTS chunk {}/{} reused from cache",
+                                i + 1,
+                                total_chunks
+                            );
+                            Some(Bytes::from(bytes))
+                        }
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+                let audio = match audio {
+                    Some(a) => a,
+                    None => {
+                        tracing::info!(
+                            "TTS chunk {}/{} ({chunk_words} words)",
+                            i + 1,
+                            total_chunks
+                        );
+                        let a = tts_google(&client, config, &chunk.text).await?;
+                        if let Some(ref p) = cache_path {
+                            let tmp = format!("{}.tmp", p);
+                            if let Err(e) = tokio::fs::write(&tmp, &a).await {
+                                tracing::warn!("Failed to write TTS chunk cache {p}: {e}");
+                            } else if let Err(e) = tokio::fs::rename(&tmp, p).await {
+                                tracing::warn!("Failed to rename TTS chunk cache {p}: {e}");
+                            }
+                        }
+                        a
+                    }
+                };
                 // Measure duration of the Google-returned MP3 before appending
                 // any silence. mp3_duration can't walk past the ID3 tag at the
                 // start of the silence file, so measuring the concatenation
@@ -238,6 +283,15 @@ fn parse_sections(text: &str) -> Vec<SectionText> {
         });
     }
     sections
+}
+
+/// Cache filename for a chunk, keyed by index + content + voice so edits to the
+/// source text or voice don't silently reuse stale audio.
+fn chunk_cache_filename(index: usize, text: &str, voice: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    voice.hash(&mut hasher);
+    text.hash(&mut hasher);
+    format!("chunk-{:04}-{:016x}.mp3", index, hasher.finish())
 }
 
 fn line_offsets(text: &str) -> Vec<(usize, &str)> {

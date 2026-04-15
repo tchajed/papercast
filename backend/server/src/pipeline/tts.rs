@@ -39,7 +39,13 @@ pub async fn run(
         });
     });
 
-    let result = tts_lib::tts::synthesize(&tts_text, &tts_config, Some(on_progress)).await?;
+    // Per-chunk MP3 cache so a retry (scheduled or manual) reuses chunks already
+    // synthesized in an earlier attempt. Cleared on success; stale dirs are
+    // garbage-collected by `gc_chunk_dirs` on worker startup.
+    let cache_dir = format!("/data/{}_tts_chunks", episode_id);
+    let result =
+        tts_lib::tts::synthesize(&tts_text, &tts_config, Some(on_progress), Some(cache_dir.clone()))
+            .await?;
 
     // TTS cost is per-character. Record char count in input_tokens for a uniform
     // usage schema; output_tokens stays 0.
@@ -76,6 +82,8 @@ pub async fn run(
         .bind(episode_id)
         .execute(pool)
         .await?;
+
+    let _ = tokio::fs::remove_dir_all(&cache_dir).await;
 
     Ok(())
 }

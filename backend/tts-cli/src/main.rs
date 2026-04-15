@@ -274,7 +274,7 @@ async fn main() -> Result<()> {
                 .context("No cleaned_text or transcript in input")?;
 
             let tts_config = tts_lib::tts::TtsConfig::new(google_tts_key()?).with_voice(voice);
-            let result = tts_lib::tts::synthesize(text, &tts_config, None).await?;
+            let result = tts_lib::tts::synthesize(text, &tts_config, None, None).await?;
 
             tokio::fs::write(&output, &result.audio).await?;
             eprintln!(
@@ -353,7 +353,7 @@ async fn main() -> Result<()> {
             eprintln!("--- TTS ---");
             let text = doc.tts_text().context("No text for TTS")?;
             let tts_config = tts_lib::tts::TtsConfig::new(google_tts_key()?).with_voice(voice);
-            let result = tts_lib::tts::synthesize(text, &tts_config, None).await?;
+            let result = tts_lib::tts::synthesize(text, &tts_config, None, None).await?;
 
             tokio::fs::write(&output, &result.audio).await?;
             eprintln!(
