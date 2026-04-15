@@ -26,7 +26,7 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/v1/feeds/{feed_token}/episodes/{episode_id}",
-            get(get_episode).delete(delete_episode),
+            get(get_episode).delete(delete_episode).patch(update_episode),
         )
         .route(
             "/api/v1/feeds/{feed_token}/episodes/{episode_id}/text",
@@ -45,6 +45,12 @@ pub struct SubmitEpisodeRequest {
     #[serde(default)]
     pub summarize: bool,
     pub summarize_focus: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateEpisodeRequest {
+    pub title: Option<String>,
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -464,6 +470,68 @@ async fn get_episode(
     .fetch_optional(&state.pool)
     .await?
     .ok_or(AppError::NotFound)?;
+
+    Ok(Json(ep))
+}
+
+async fn update_episode(
+    State(state): State<AppState>,
+    Path((feed_token, episode_id)): Path<(String, String)>,
+    Json(req): Json<UpdateEpisodeRequest>,
+) -> AppResult<Json<EpisodeResponse>> {
+    let feed_id = resolve_feed(&state.pool, &feed_token).await?;
+
+    let exists: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM episodes WHERE id = $1 AND feed_id = $2")
+            .bind(&episode_id)
+            .bind(&feed_id)
+            .fetch_optional(&state.pool)
+            .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    if let Some(title) = req.title.as_ref() {
+        let t = title.trim();
+        if t.is_empty() {
+            return Err(AppError::BadRequest("title cannot be empty".into()));
+        }
+        sqlx::query("UPDATE episodes SET title = $1 WHERE id = $2 AND feed_id = $3")
+            .bind(t)
+            .bind(&episode_id)
+            .bind(&feed_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    if let Some(source_url) = req.source_url.as_ref() {
+        let url = source_url.trim();
+        let new_url: Option<String> = if url.is_empty() { None } else { Some(url.to_string()) };
+        let new_type = new_url.as_deref().map(detect_source_type);
+        sqlx::query("UPDATE episodes SET source_url = $1, source_type = COALESCE($2, source_type) WHERE id = $3 AND feed_id = $4")
+            .bind(&new_url)
+            .bind(new_type)
+            .bind(&episode_id)
+            .bind(&feed_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    let ep = sqlx::query_as::<_, EpisodeResponse>(
+        "SELECT e.id, e.title, e.source_url, e.source_type, e.status, e.audio_url, e.image_url,
+                e.duration_secs, e.word_count, e.tts_chunks_done, e.tts_chunks_total,
+                e.tts_provider, e.description, e.error_msg, e.pub_date, e.created_at, e.summarize,
+                (SELECT j.run_after FROM jobs j
+                 WHERE j.episode_id = e.id AND j.status = 'queued'
+                       AND j.run_after > datetime('now')
+                       AND j.job_type NOT IN ('image', 'describe')
+                 ORDER BY j.run_after ASC LIMIT 1) AS retry_at
+         FROM episodes e WHERE e.id = $1 AND e.feed_id = $2",
+    )
+    .bind(&episode_id)
+    .bind(&feed_id)
+    .fetch_one(&state.pool)
+    .await?;
 
     Ok(Json(ep))
 }

@@ -163,6 +163,17 @@ export async function getEpisode(feedToken: string, episodeId: string): Promise<
 	return apiFetch(`/api/v1/feeds/${feedToken}/episodes/${episodeId}`);
 }
 
+export async function updateEpisode(
+	feedToken: string,
+	episodeId: string,
+	data: { title?: string; source_url?: string }
+): Promise<Episode> {
+	return apiFetch(`/api/v1/feeds/${feedToken}/episodes/${episodeId}`, {
+		method: 'PATCH',
+		body: JSON.stringify(data),
+	});
+}
+
 export async function deleteEpisode(feedToken: string, episodeId: string): Promise<void> {
 	await fetch(`${API_BASE}/api/v1/feeds/${feedToken}/episodes/${episodeId}`, {
 		method: 'DELETE',

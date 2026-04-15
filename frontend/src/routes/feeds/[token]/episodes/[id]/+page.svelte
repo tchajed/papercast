@@ -2,14 +2,18 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
-	import { getEpisode, getEpisodeText, retryEpisode, deleteEpisode, formatDuration, formatTimestamp, episodeTitle, type Episode, type Section } from '$lib/api';
+	import { getEpisode, getEpisodeText, retryEpisode, deleteEpisode, updateEpisode, formatDuration, formatTimestamp, episodeTitle, type Episode, type Section } from '$lib/api';
 	import TextModal from '$lib/TextModal.svelte';
-	import { ArrowLeft, ExternalLink, FileUp, Clock, AlertCircle, RotateCcw, FileText, ScrollText, Trash2 } from 'lucide-svelte';
+	import { ArrowLeft, ExternalLink, FileUp, Clock, AlertCircle, RotateCcw, FileText, ScrollText, Trash2, Pencil } from 'lucide-svelte';
 
 	let episode = $state<Episode | null>(null);
 	let error = $state('');
 	let retrying = $state(false);
 	let deleting = $state(false);
+	let editing = $state(false);
+	let editTitle = $state('');
+	let editSourceUrl = $state('');
+	let saving = $state(false);
 	let showText = $state<false | 'cleaned' | 'transcript'>(false);
 	let cleanedText = $state<string | null>(null);
 	let transcript = $state<string | null>(null);
@@ -86,6 +90,30 @@
 		}
 	}
 
+	function startEdit() {
+		if (!episode) return;
+		editTitle = episode.title;
+		editSourceUrl = episode.source_url ?? '';
+		editing = true;
+	}
+
+	async function saveEdit() {
+		if (!episode) return;
+		saving = true;
+		try {
+			const updated = await updateEpisode(token, episodeId, {
+				title: editTitle,
+				source_url: editSourceUrl,
+			});
+			episode = updated;
+			editing = false;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update';
+		} finally {
+			saving = false;
+		}
+	}
+
 	async function handleRetry() {
 		retrying = true;
 		try {
@@ -130,6 +158,22 @@
 
 {#if episode}
 	<div class="card">
+		{#if editing}
+			<form onsubmit={(e) => { e.preventDefault(); saveEdit(); }} class="mb-2" style="display: flex; flex-direction: column; gap: 0.5rem;">
+				<label style="display: flex; flex-direction: column; gap: 0.25rem;">
+					<span class="muted" style="font-size: 0.875rem;">Title</span>
+					<input type="text" bind:value={editTitle} required />
+				</label>
+				<label style="display: flex; flex-direction: column; gap: 0.25rem;">
+					<span class="muted" style="font-size: 0.875rem;">Source URL</span>
+					<input type="url" bind:value={editSourceUrl} placeholder="(leave blank to clear)" />
+				</label>
+				<div class="flex" style="gap: 0.5rem;">
+					<button type="submit" class="primary" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+					<button type="button" onclick={() => (editing = false)} disabled={saving}>Cancel</button>
+				</div>
+			</form>
+		{/if}
 		<div class="flex-between mb-1">
 			<h2>{episodeTitle(episode)}</h2>
 			<span class={badgeClass(episode.status)}>
@@ -244,6 +288,9 @@
 			{#if loadingText}
 				<span class="muted">Loading...</span>
 			{/if}
+			<button class="flex" style="display: inline-flex;" onclick={startEdit} disabled={editing}>
+				<Pencil size={14} /> Edit
+			</button>
 			<button class="danger flex" style="display: inline-flex; margin-left: auto;" onclick={handleDelete} disabled={deleting}>
 				<Trash2 size={14} />
 				{deleting ? 'Deleting...' : 'Delete episode'}
