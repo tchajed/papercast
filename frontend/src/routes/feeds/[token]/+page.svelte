@@ -258,9 +258,7 @@
 					</a>
 				</div>
 				<span class={badgeClass(ep.status)}>
-					{ep.status}{#if ep.tts_chunks_total > 0 && ep.status !== 'done' && ep.status !== 'error'}
-						· {ep.tts_chunks_done}/{ep.tts_chunks_total}
-					{/if}
+					{ep.status}{#if ep.tts_chunks_total > 0 && ep.status !== 'done' && ep.status !== 'error'} · {ep.tts_chunks_done}/{ep.tts_chunks_total}{/if}
 				</span>
 			</div>
 			<div class="muted flex" style="font-size: 0.8rem;">

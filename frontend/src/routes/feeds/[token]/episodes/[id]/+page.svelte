@@ -133,9 +133,7 @@
 		<div class="flex-between mb-1">
 			<h2>{episodeTitle(episode)}</h2>
 			<span class={badgeClass(episode.status)}>
-				{episode.status}{#if episode.tts_chunks_total > 0 && episode.status !== 'done' && episode.status !== 'error'}
-					· {episode.tts_chunks_done}/{episode.tts_chunks_total}
-				{/if}
+				{episode.status}{#if episode.tts_chunks_total > 0 && episode.status !== 'done' && episode.status !== 'error'} · {episode.tts_chunks_done}/{episode.tts_chunks_total}{/if}
 			</span>
 		</div>
 
