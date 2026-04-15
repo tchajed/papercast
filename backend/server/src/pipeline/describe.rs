@@ -22,9 +22,10 @@ pub async fn run(
     };
 
     let provider = config.make_provider();
-    let description = tts_lib::describe::describe(&doc, &provider)
+    let (description, usage) = tts_lib::describe::describe(&doc, &provider)
         .await
         .with_context(|| format!("Describe failed for episode {episode_id}"))?;
+    crate::usage::record(pool, Some(episode_id), None, "describe", &usage).await;
 
     sqlx::query("UPDATE episodes SET description = $1 WHERE id = $2")
         .bind(&description)

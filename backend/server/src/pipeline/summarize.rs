@@ -26,9 +26,10 @@ pub async fn run(
     };
 
     let provider = config.make_provider();
-    let doc = tts_lib::summarize::summarize(&input_doc, &provider, focus.as_deref())
+    let (doc, usage) = tts_lib::summarize::summarize(&input_doc, &provider, focus.as_deref())
         .await
         .with_context(|| format!("Summarize failed for episode {episode_id}"))?;
+    crate::usage::record(pool, Some(episode_id), None, "summarize", &usage).await;
 
     let transcript = doc
         .transcript

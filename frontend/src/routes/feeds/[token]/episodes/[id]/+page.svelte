@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
-	import { getEpisode, getEpisodeText, retryEpisode, formatDuration, formatTimestamp, episodeTitle, type Episode, type Section } from '$lib/api';
+	import { getEpisode, getEpisodeText, retryEpisode, deleteEpisode, formatDuration, formatTimestamp, episodeTitle, type Episode, type Section } from '$lib/api';
 	import TextModal from '$lib/TextModal.svelte';
-	import { ArrowLeft, ExternalLink, FileUp, Clock, AlertCircle, RotateCcw, FileText, ScrollText } from 'lucide-svelte';
+	import { ArrowLeft, ExternalLink, FileUp, Clock, AlertCircle, RotateCcw, FileText, ScrollText, Trash2 } from 'lucide-svelte';
 
 	let episode = $state<Episode | null>(null);
 	let error = $state('');
 	let retrying = $state(false);
+	let deleting = $state(false);
 	let showText = $state<false | 'cleaned' | 'transcript'>(false);
 	let cleanedText = $state<string | null>(null);
 	let transcript = $state<string | null>(null);
@@ -69,6 +71,20 @@
 	onDestroy(() => {
 		if (pollInterval) clearInterval(pollInterval);
 	});
+
+	async function handleDelete() {
+		if (!confirm('Delete this episode? This removes the audio and image from storage and cannot be undone.')) {
+			return;
+		}
+		deleting = true;
+		try {
+			await deleteEpisode(token, episodeId);
+			goto(`/feeds/${token}`);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to delete';
+			deleting = false;
+		}
+	}
 
 	async function handleRetry() {
 		retrying = true;
@@ -213,7 +229,7 @@
 			</div>
 		{/if}
 
-		<div class="mt-2 flex" style="gap: 0.5rem;">
+		<div class="mt-2 flex" style="gap: 0.5rem; flex-wrap: wrap;">
 			<button class="flex" style="display: inline-flex;" onclick={() => openText('cleaned')} disabled={loadingText}>
 				<ScrollText size={14} />
 				{episode.summarize ? 'Full text' : 'Transcript'}
@@ -226,6 +242,10 @@
 			{#if loadingText}
 				<span class="muted">Loading...</span>
 			{/if}
+			<button class="danger flex" style="display: inline-flex; margin-left: auto;" onclick={handleDelete} disabled={deleting}>
+				<Trash2 size={14} />
+				{deleting ? 'Deleting...' : 'Delete episode'}
+			</button>
 		</div>
 	</div>
 {:else if error}

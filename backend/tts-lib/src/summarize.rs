@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{Document, Provider};
+use crate::{Document, Provider, Usage};
 
 const SUMMARIZE_SYSTEM_PROMPT: &str = r#"You are preparing a concise podcast-style summary of a text.
 Condense the content into a clear, engaging summary suitable for listening.
@@ -20,7 +20,7 @@ pub async fn summarize(
     doc: &Document,
     provider: &Provider,
     focus: Option<&str>,
-) -> Result<Document> {
+) -> Result<(Document, Usage)> {
     let cleaned_text = doc
         .cleaned_text
         .as_ref()
@@ -34,7 +34,7 @@ pub async fn summarize(
     };
 
     let client = reqwest::Client::new();
-    let transcript = provider
+    let result = provider
         .chat(
             &client,
             "claude-sonnet-4-6",
@@ -43,13 +43,14 @@ pub async fn summarize(
             8192,
         )
         .await?;
+    let transcript = result.text;
 
     let word_count = transcript.split_whitespace().count();
     tracing::info!("Summarization complete: {word_count} words");
 
-    Ok(Document {
+    Ok((Document {
         transcript: Some(transcript),
         word_count: Some(word_count),
         ..doc.clone()
-    })
+    }, result.usage))
 }

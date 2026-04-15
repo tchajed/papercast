@@ -26,8 +26,10 @@ pub async fn run(
     .context("No cleaned_text for image generation")?;
 
     let provider = config.make_provider();
-    let summary = tts_lib::image::visual_summary(&cleaned_text, &provider).await?;
-    let image = tts_lib::image::generate_image(&config.google_studio_api_key, &summary).await?;
+    let (summary, vs_usage) = tts_lib::image::visual_summary(&cleaned_text, &provider).await?;
+    crate::usage::record(pool, Some(episode_id), None, "visual_summary", &vs_usage).await;
+    let (image, img_usage) = tts_lib::image::generate_image(&config.google_studio_api_key, &summary).await?;
+    crate::usage::record(pool, Some(episode_id), None, "image", &img_usage).await;
 
     let image_url = storage
         .upload_episode_image(episode_id, image.bytes, &image.mime_type)

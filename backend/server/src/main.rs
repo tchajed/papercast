@@ -4,6 +4,7 @@ mod error;
 mod ids;
 mod pipeline;
 mod routes;
+mod usage;
 mod worker;
 
 use axum::Router;

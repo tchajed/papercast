@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{Document, Provider};
+use crate::{Document, Provider, Usage};
 
 const ARTICLE_SYSTEM_PROMPT: &str = r#"You are preparing a web article for text-to-speech conversion.
 Transform the provided text so it reads naturally when spoken aloud.
@@ -40,7 +40,7 @@ Rules:
 - Output only the cleaned text, nothing else."#;
 
 /// Clean raw text for TTS. Dispatches to the configured provider.
-pub async fn clean(doc: &Document, provider: &Provider) -> Result<Document> {
+pub async fn clean(doc: &Document, provider: &Provider) -> Result<(Document, Usage)> {
     let raw_text = doc
         .raw_text
         .as_ref()
@@ -60,16 +60,17 @@ pub async fn clean(doc: &Document, provider: &Provider) -> Result<Document> {
     // Long papers (e.g. Spanner) produce >8k output tokens after cleaning;
     // 32k comfortably fits a full conference-paper body without truncation.
     let client = reqwest::Client::new();
-    let cleaned_text = provider
+    let result = provider
         .chat(&client, claude_model, Some(system_prompt), raw_text, 32768)
         .await?;
+    let cleaned_text = result.text;
 
     let word_count = cleaned_text.split_whitespace().count();
     tracing::info!("Cleaning complete: {word_count} words");
 
-    Ok(Document {
+    Ok((Document {
         cleaned_text: Some(cleaned_text),
         word_count: Some(word_count),
         ..doc.clone()
-    })
+    }, result.usage))
 }

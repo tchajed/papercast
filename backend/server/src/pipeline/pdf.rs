@@ -9,10 +9,11 @@ pub async fn run(
 ) -> Result<()> {
     let pdf_path = format!("/data/{}.pdf", episode_id);
 
-    let doc = match config.pdf_extractor.as_str() {
+    let (doc, usages) = match config.pdf_extractor.as_str() {
         "gemini" => tts_lib::pdf_gemini::extract(&pdf_path, &config.google_studio_api_key).await?,
         _ => tts_lib::pdf::extract(&pdf_path, &config.anthropic_api_key).await?,
     };
+    crate::usage::record_many(pool, Some(episode_id), None, "pdf_extract", &usages).await;
 
     let title = doc.title.as_deref().unwrap_or("Untitled PDF");
     let raw_text = doc

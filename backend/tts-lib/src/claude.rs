@@ -54,6 +54,16 @@ pub struct ImageSource {
 #[derive(Deserialize)]
 pub struct Response {
     pub content: Vec<ResponseBlock>,
+    #[serde(default)]
+    pub usage: Option<ResponseUsage>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ResponseUsage {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -69,7 +79,7 @@ impl Response {
     }
 }
 
-/// Send a simple text-in/text-out request to Claude.
+/// Send a simple text-in/text-out request to Claude. Returns text + usage.
 pub async fn chat(
     client: &reqwest::Client,
     api_key: &str,
@@ -77,7 +87,7 @@ pub async fn chat(
     system: Option<&str>,
     user_message: &str,
     max_tokens: u32,
-) -> Result<String> {
+) -> Result<crate::ChatResult> {
     let request = Request {
         model: model.to_string(),
         max_tokens,
@@ -124,10 +134,21 @@ pub async fn chat(
         .text()
         .map(|s| s.to_string())
         .context("Empty response from Claude")?;
+    let resp_usage = claude_resp.usage.unwrap_or_default();
     tracing::info!(
-        "Claude chat done: model={model} input_chars={input_chars} output_chars={} elapsed={:?}",
+        "Claude chat done: model={model} input_tokens={} output_tokens={} output_chars={} elapsed={:?}",
+        resp_usage.input_tokens,
+        resp_usage.output_tokens,
         text.len(),
         started.elapsed()
     );
-    Ok(text)
+    Ok(crate::ChatResult {
+        text,
+        usage: crate::Usage {
+            provider: "claude".into(),
+            model: model.to_string(),
+            input_tokens: resp_usage.input_tokens,
+            output_tokens: resp_usage.output_tokens,
+        },
+    })
 }

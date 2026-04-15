@@ -3,7 +3,7 @@ use base64::Engine;
 use futures::stream::{self, StreamExt};
 
 use crate::claude;
-use crate::Document;
+use crate::{Document, Usage};
 
 const PAGE_CONCURRENCY: usize = 4;
 
@@ -27,11 +27,13 @@ const RETRY_DPIS: &[u32] = &[200, 150];
 struct PageResult {
     text: String,
     skipped: bool,
+    input_tokens: u32,
+    output_tokens: u32,
 }
 
 /// Extract text from a PDF file using pdftoppm + Claude vision.
 /// Uses multiple DPIs as a fallback when the content filter blocks a page.
-pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<Document> {
+pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<(Document, Vec<Usage>)> {
     let base = pdf_path.trim_end_matches(".pdf");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
@@ -56,7 +58,7 @@ pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<Document
         .collect();
     let primary_files = rendered[0].2.clone();
 
-    let page_results: Vec<Result<(usize, String)>> = stream::iter(
+    let page_results: Vec<Result<(usize, String, u32, u32)>> = stream::iter(
         primary_files.into_iter().enumerate()
     )
     .map(|(i, primary_path)| {
@@ -66,12 +68,16 @@ pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<Document
             let page_num = i + 1;
             let mut result =
                 extract_page(&client, anthropic_api_key, &primary_path, page_num).await?;
+            let mut total_in = result.input_tokens;
+            let mut total_out = result.output_tokens;
 
             if result.skipped {
                 for (dpi, fb_dir) in &fallback_dirs {
                     let fb_path = page_path_for(fb_dir, page_num);
                     tracing::info!("Retrying page {page_num} at {dpi} DPI");
                     result = extract_page(&client, anthropic_api_key, &fb_path, page_num).await?;
+                    total_in += result.input_tokens;
+                    total_out += result.output_tokens;
                     if !result.skipped {
                         break;
                     }
@@ -81,18 +87,29 @@ pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<Document
             if result.skipped {
                 tracing::warn!("Page {page_num} blocked by content filter at all DPIs, skipping");
             }
-            Ok::<_, anyhow::Error>((i, result.text))
+            Ok::<_, anyhow::Error>((i, result.text, total_in, total_out))
         }
     })
     .buffer_unordered(PAGE_CONCURRENCY)
     .collect()
     .await;
 
-    let mut indexed: Vec<(usize, String)> = page_results.into_iter().collect::<Result<_>>()?;
-    indexed.sort_by_key(|(i, _)| *i);
+    let mut indexed: Vec<(usize, String, u32, u32)> = page_results.into_iter().collect::<Result<_>>()?;
+    indexed.sort_by_key(|(i, _, _, _)| *i);
+    let mut usages: Vec<Usage> = Vec::new();
     let all_text: Vec<String> = indexed
         .into_iter()
-        .map(|(_, t)| t)
+        .map(|(_, t, in_tok, out_tok)| {
+            if in_tok + out_tok > 0 {
+                usages.push(Usage {
+                    provider: "claude".into(),
+                    model: "claude-sonnet-4-6".into(),
+                    input_tokens: in_tok,
+                    output_tokens: out_tok,
+                });
+            }
+            t
+        })
         .filter(|t| !t.is_empty())
         .collect();
 
@@ -103,8 +120,13 @@ pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<Document
         anyhow::bail!("Empty text extracted from PDF");
     }
 
-    let title = extract_title(&client, anthropic_api_key, &raw_text).await
-        .unwrap_or_else(|_| "Untitled PDF".to_string());
+    let (title, title_usage) = match extract_title(&client, anthropic_api_key, &raw_text).await {
+        Ok((t, u)) => (t, Some(u)),
+        Err(_) => ("Untitled PDF".to_string(), None),
+    };
+    if let Some(u) = title_usage {
+        usages.push(u);
+    }
 
     // Clean up
     let _ = tokio::fs::remove_dir_all(&primary_dir).await;
@@ -112,12 +134,12 @@ pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<Document
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 
-    Ok(Document {
+    Ok((Document {
         title: Some(title),
         source_type: "pdf".to_string(),
         raw_text: Some(raw_text),
         ..Default::default()
-    })
+    }, usages))
 }
 
 async fn render_pdf(pdf_path: &str, out_dir: &str, dpi: u32) -> Result<Vec<String>> {
@@ -219,6 +241,8 @@ async fn extract_page(
             return Ok(PageResult {
                 text: String::new(),
                 skipped: true,
+                input_tokens: 0,
+                output_tokens: 0,
             });
         }
         tracing::error!("Claude API error on page {page_num}: {status} {body}");
@@ -232,10 +256,13 @@ async fn extract_page(
         .map(|claude::ResponseBlock::Text { text }| text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    let u = claude_resp.usage.unwrap_or_default();
 
     Ok(PageResult {
         text,
         skipped: false,
+        input_tokens: u.input_tokens,
+        output_tokens: u.output_tokens,
     })
 }
 
@@ -243,9 +270,9 @@ async fn extract_title(
     client: &reqwest::Client,
     api_key: &str,
     text: &str,
-) -> Result<String> {
+) -> Result<(String, Usage)> {
     let snippet: String = text.chars().take(2000).collect();
-    let title = claude::chat(
+    let result = claude::chat(
         client,
         api_key,
         "claude-sonnet-4-6",
@@ -257,5 +284,5 @@ async fn extract_title(
         100,
     )
     .await?;
-    Ok(title.trim().to_string())
+    Ok((result.text.trim().to_string(), result.usage))
 }

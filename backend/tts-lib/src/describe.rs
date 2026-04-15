@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{Document, Provider};
+use crate::{Document, Provider, Usage};
 
 const SYSTEM_PROMPT: &str = r#"You are writing a short description for a podcast episode, to appear in a podcast feed.
 
@@ -12,7 +12,7 @@ Rules:
 
 /// Generate a short episode description from a document's transcript or
 /// cleaned text. Prefers transcript when present.
-pub async fn describe(doc: &Document, provider: &Provider) -> Result<String> {
+pub async fn describe(doc: &Document, provider: &Provider) -> Result<(String, Usage)> {
     let source = doc
         .transcript
         .as_deref()
@@ -22,7 +22,7 @@ pub async fn describe(doc: &Document, provider: &Provider) -> Result<String> {
     let snippet: String = source.chars().take(8000).collect();
 
     let client = reqwest::Client::new();
-    let description = provider
+    let result = provider
         .chat(
             &client,
             "claude-sonnet-4-6",
@@ -31,5 +31,5 @@ pub async fn describe(doc: &Document, provider: &Provider) -> Result<String> {
             400,
         )
         .await?;
-    Ok(description.trim().to_string())
+    Ok((result.text.trim().to_string(), result.usage))
 }

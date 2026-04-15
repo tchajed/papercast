@@ -19,7 +19,7 @@ pub async fn chat(
     system: Option<&str>,
     user_message: &str,
     max_output_tokens: u32,
-) -> Result<String> {
+) -> Result<crate::ChatResult> {
     let mut body = json!({
         "contents": [{
             "parts": [{ "text": user_message }]
@@ -87,10 +87,21 @@ pub async fn chat(
         anyhow::bail!("Empty response from Gemini (finishReason={finish_reason})");
     }
 
+    let usage_meta = &body["usageMetadata"];
+    let input_tokens = usage_meta["promptTokenCount"].as_u64().unwrap_or(0) as u32;
+    let output_tokens = usage_meta["candidatesTokenCount"].as_u64().unwrap_or(0) as u32;
     tracing::info!(
-        "Gemini chat done: model={model} input_chars={input_chars} output_chars={} elapsed={:?}",
+        "Gemini chat done: model={model} input_tokens={input_tokens} output_tokens={output_tokens} output_chars={} elapsed={:?}",
         text.len(),
         started.elapsed()
     );
-    Ok(text)
+    Ok(crate::ChatResult {
+        text,
+        usage: crate::Usage {
+            provider: "gemini".into(),
+            model: model.to_string(),
+            input_tokens,
+            output_tokens,
+        },
+    })
 }

@@ -182,16 +182,18 @@ struct SectionText {
 /// Returns sections in order. Leading text before the first header becomes a
 /// section with `title: None`. Returns empty if text has no `## ` headers.
 fn parse_sections(text: &str) -> Vec<SectionText> {
-    // Find line-starts that begin with "## " (not "### " etc.)
+    // Find line-starts that begin with "## " (not "### " etc.). Tolerate
+    // leading whitespace since some cleaners indent header lines.
     let mut headers: Vec<(usize, String)> = Vec::new();
     for (line_start, line) in line_offsets(text) {
-        if let Some(rest) = line.strip_prefix("## ") {
-            // Exclude `### ` (would have been "## #..." after stripping "## ")
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("## ") {
             if !rest.starts_with('#') {
                 headers.push((line_start, rest.trim().to_string()));
             }
         }
     }
+    tracing::info!("parse_sections: detected {} sections", headers.len());
 
     if headers.is_empty() {
         return Vec::new();
@@ -346,11 +348,20 @@ async fn tts_google(
             "audioConfig": { "audioEncoding": "MP3" },
         }))
         .send()
-        .await?
-        .error_for_status()
-        .context("Google TTS request failed")?;
+        .await
+        .context("Google TTS request send failed")?;
 
-    let body: serde_json::Value = resp.json().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        // Capture the response body so the error message identifies the actual
+        // failure (quota exceeded, invalid voice, auth, etc.) rather than just
+        // "request failed". Truncate defensively to avoid enormous error rows.
+        let body = resp.text().await.unwrap_or_default();
+        let truncated: String = body.chars().take(1000).collect();
+        anyhow::bail!("Google TTS {status}: {truncated}");
+    }
+
+    let body: serde_json::Value = resp.json().await.context("Google TTS response parse failed")?;
     let audio_b64 = body["audioContent"]
         .as_str()
         .context("No audioContent in Google TTS response")?;

@@ -11,6 +11,22 @@ pub mod tts;
 
 use serde::{Deserialize, Serialize};
 
+/// Token usage reported by a single AI API call. Used for cost accounting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Usage {
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+/// Text response plus its usage metadata.
+#[derive(Debug, Clone)]
+pub struct ChatResult {
+    pub text: String,
+    pub usage: Usage,
+}
+
 /// AI provider for text-based tasks (clean, summarize).
 #[derive(Debug, Clone)]
 pub enum Provider {
@@ -39,7 +55,7 @@ impl Provider {
         system: Option<&str>,
         user_message: &str,
         max_output_tokens: u32,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<ChatResult> {
         match self {
             Provider::Claude { api_key } => {
                 claude::chat(client, api_key, claude_model, system, user_message, max_output_tokens).await

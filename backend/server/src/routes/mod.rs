@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod episodes;
 pub mod feeds;
 pub mod rss;
@@ -9,6 +10,7 @@ pub fn api_router() -> Router<AppState> {
     Router::new()
         .merge(feeds::router())
         .merge(episodes::router())
+        .merge(admin::router())
 }
 
 pub fn rss_router() -> Router<AppState> {

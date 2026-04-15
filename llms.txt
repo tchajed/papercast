@@ -1,0 +1,288 @@
+# TTS Podcast — LLM-Oriented API Reference
+
+Self-hosted service that converts web articles, arXiv papers, PDFs, and
+Markdown/text uploads into podcast episodes. Submissions enter a multi-stage
+pipeline (scrape/extract → clean → optionally summarize → TTS → cover image)
+and are published as a per-feed RSS document.
+
+See DESIGN.md for the broader design; this file is a single-page reference
+of every HTTP endpoint, its request/response shape, and the SQLite schema.
+
+## Authentication
+
+Two bearer tokens, both sent in `Authorization: Bearer <token>`:
+
+- `ADMIN_TOKEN` — required for feed CRUD, admin/status/usage/jobs, and feed
+  image regeneration. One global token.
+- `feed_token` — one per feed (UUID, generated on feed create). Passed in the
+  URL path, not the Authorization header, for all `/api/v1/feeds/:token/...`
+  endpoints and the public `/feed/:token/rss.xml`.
+
+## Endpoints
+
+Base path: `/api/v1`. Responses are JSON unless noted. HTTP 401 = missing or
+invalid admin token; 404 = feed/episode not found (or wrong feed_token); 400 =
+validation error; 5xx = upstream failure.
+
+### Feeds
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| POST | `/api/v1/feeds` | Admin | `{ slug, title, description?, tts_default? }` | `201 FeedResponse` |
+| GET | `/api/v1/feeds` | Admin | — | `[FeedListItem]` (includes `episode_count`) |
+| GET | `/api/v1/feeds/:token` | — (feed_token in URL) | — | `FeedWithEpisodes` |
+| PATCH | `/api/v1/feeds/:token` | Admin | `{ slug?, title?, description? }` | `FeedResponse` |
+| DELETE | `/api/v1/feeds/:token` | Admin | — | `204` |
+| POST | `/api/v1/feeds/:token/image` | Admin | — | `FeedResponse` (regenerates cover) |
+
+`tts_default` must be `"google"` (OpenAI/ElevenLabs are schema-allowed but not
+wired up).
+
+### Episodes
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| POST | `/api/v1/feeds/:token/episodes` | feed_token | `{ url, tts_provider?, summarize?, summarize_focus? }` | `202 SubmitEpisodeResponse` |
+| POST | `/api/v1/feeds/:token/episodes/pdf` | feed_token | multipart: `file`, `title?`, `source_url?`, `tts_provider?`, `summarize?`, `summarize_focus?` | `202 SubmitEpisodeResponse` |
+| POST | `/api/v1/feeds/:token/episodes/text` | feed_token | `{ title, text, source_url?, tts_provider?, summarize?, summarize_focus? }` | `202 SubmitEpisodeResponse` |
+| GET | `/api/v1/feeds/:token/episodes/:id` | feed_token | — | `EpisodeResponse` |
+| GET | `/api/v1/feeds/:token/episodes/:id/text` | feed_token | — | `{ raw_text, cleaned_text, transcript, sections }` |
+| POST | `/api/v1/feeds/:token/episodes/:id/retry` | feed_token | — | `{ id, status, retrying_stage }` |
+| DELETE | `/api/v1/feeds/:token/episodes/:id` | feed_token | — | `204` (also deletes audio/image from storage) |
+
+The PDF upload route also accepts `.md`, `.markdown`, or `.txt` files;
+they're stored as `source_type = "markdown"` and skip the PDF stage. The
+`/episodes/text` endpoint is equivalent but takes text inline as JSON.
+
+`source_type` values: `"article"`, `"arxiv"`, `"pdf"`, `"markdown"`. Auto-
+detected from URL for URL submissions; explicit for PDF/text routes.
+
+### Admin / monitoring
+
+All require `Authorization: Bearer $ADMIN_TOKEN`.
+
+| Method | Path | Query | Response |
+|---|---|---|---|
+| GET | `/api/v1/admin/status` | — | `{ pending, active, error, done, queued_jobs, running_jobs }` |
+| GET | `/api/v1/admin/jobs` | — | `{ jobs: [JobRow] }` — queued + running jobs, joined with episode title + feed slug, plus `tts_chunks_done/total` |
+| GET | `/api/v1/admin/usage` | `days=N` (optional) | `{ since, groups: [UsageGroup], total_estimated_usd }` — grouped by (provider, model, stage) |
+| GET | `/api/v1/admin/usage/episode/:id` | — | `{ episode_id, rows: [EpisodeUsageRow], estimated_usd }` |
+
+`total_estimated_usd` and `estimated_usd` use a hard-coded rate table (USD per
+1M tokens, or per 1M chars for TTS). Intended for relative comparison, not
+billing. Rates: Claude Opus $15/$75, Sonnet $3/$15, Haiku $1/$5; Gemini
+$0.30/$2.50 (image model output treated at $30); google_tts $16/1M chars.
+
+### RSS
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/feed/:token/rss.xml` | feed_token in URL | RSS 2.0 + iTunes namespace; `<itunes:image>` per episode |
+
+## Response type shapes
+
+```ts
+// Feed responses
+type FeedResponse = {
+  id: string;                 // UUID
+  slug: string;
+  title: string;
+  description: string;
+  feed_token: string;         // UUID (show to user once; used in URLs)
+  tts_default: string;        // "google"
+  rss_url: string;            // "{PUBLIC_URL}/feed/{feed_token}/rss.xml"
+  created_at: string;         // "YYYY-MM-DD HH:MM:SS" UTC
+  image_url: string | null;
+};
+type FeedListItem = FeedResponse & { episode_count: number };
+type FeedWithEpisodes = FeedResponse & { episodes: EpisodeSummary[] };
+
+// Episode responses
+type EpisodeSummary = {
+  id: string;
+  title: string;
+  source_url: string | null;
+  source_type: "article" | "arxiv" | "pdf" | "markdown";
+  status: EpisodeStatus;
+  audio_url: string | null;
+  image_url: string | null;
+  duration_secs: number | null;
+  word_count: number | null;
+  tts_chunks_done: number;
+  tts_chunks_total: number;
+  tts_provider: string | null;
+  description: string | null;  // short AI-generated summary
+  error_msg: string | null;
+  pub_date: string | null;     // UTC
+  created_at: string;          // UTC
+  summarize: 0 | 1;
+  retry_at: string | null;     // UTC; derived from earliest queued job
+};
+type EpisodeResponse = EpisodeSummary;
+
+type EpisodeStatus =
+  | "pending"
+  | "scraping"
+  | "cleaning"
+  | "summarizing"
+  | "tts"
+  | "done"
+  | "error";
+
+type SubmitEpisodeResponse = {
+  id: string;
+  status: string;
+  source_url: string | null;
+  source_type: string;
+};
+
+// Admin responses
+type JobRow = {
+  id: string;
+  episode_id: string;
+  episode_title: string;
+  feed_slug: string;
+  job_type: "scrape" | "pdf" | "clean" | "summarize" | "tts" | "image";
+  status: "queued" | "running";
+  attempts: number;
+  run_after: string;           // UTC
+  created_at: string;          // UTC
+  tts_chunks_done: number;
+  tts_chunks_total: number;
+};
+type UsageGroup = {
+  provider: "claude" | "gemini" | "google_tts";
+  model: string;
+  stage: string;               // "clean" | "summarize" | "describe" | "pdf_extract" | "visual_summary" | "image" | "feed_image" | "tts"
+  calls: number;
+  input_tokens: number;        // for google_tts, this is character count
+  output_tokens: number;
+};
+type EpisodeUsageRow = Omit<UsageGroup, "calls"> & { created_at: string };
+```
+
+## SQLite schema
+
+The database lives at `DATABASE_URL` (typically `sqlite:///data/podcast.db`).
+WAL mode, embedded migrations in `backend/server/migrations/`. Current
+migrations:
+
+```
+001_initial.sql          feeds, episodes tables + indexes
+002_jobs.sql             jobs table for the background worker
+003_tts_progress.sql     episodes.tts_chunks_done / tts_chunks_total
+004_summarize.sql        episodes.summarize, episodes.transcript
+005_audio_bytes.sql      episodes.audio_bytes (for size reporting)
+006_t3_hostname.sql      legacy hostname swap
+007_t3_hostname_fix.sql  ^ corrigendum
+008_requeue_image_jobs.sql  one-off data fix
+009_episode_description.sql episodes.description (AI-generated blurb)
+010_feed_image.sql       feeds.image_url
+011_sections.sql         episodes.sections_json (chapter timestamps)
+012_summarize_focus.sql  episodes.summarize_focus (user-supplied)
+013_ai_usage.sql         ai_usage table + indexes
+```
+
+### `feeds`
+
+```sql
+CREATE TABLE feeds (
+    id           TEXT PRIMARY KEY,    -- UUID
+    slug         TEXT NOT NULL UNIQUE,
+    title        TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    feed_token   TEXT NOT NULL UNIQUE,  -- UUID; used in URLs
+    tts_default  TEXT NOT NULL DEFAULT 'openai'
+                     CHECK (tts_default IN ('openai', 'elevenlabs', 'google')),
+    image_url    TEXT,  -- Tigris URL for cover image (added in 010)
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+### `episodes`
+
+```sql
+CREATE TABLE episodes (
+    id                TEXT PRIMARY KEY,             -- UUID
+    feed_id           TEXT NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+    title             TEXT NOT NULL DEFAULT '',
+    source_url        TEXT,
+    source_type       TEXT NOT NULL CHECK (source_type IN ('article','arxiv','pdf','markdown')),
+    raw_text          TEXT,          -- scrape / PDF extraction output
+    cleaned_text      TEXT,          -- clean stage output (TTS fallback)
+    transcript        TEXT,          -- summarize stage output (TTS primary if non-null)
+    audio_url         TEXT,          -- public Tigris URL
+    image_url         TEXT,          -- public Tigris URL
+    duration_secs     INTEGER,
+    word_count        INTEGER,
+    audio_bytes       INTEGER,
+    tts_provider      TEXT,
+    tts_chunks_done   INTEGER NOT NULL DEFAULT 0,
+    tts_chunks_total  INTEGER NOT NULL DEFAULT 0,
+    status            TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending','scraping','cleaning',
+                                            'summarizing','tts','image','done','error')),
+    error_msg         TEXT,
+    description       TEXT,          -- short AI-generated blurb
+    summarize         INTEGER NOT NULL DEFAULT 0,
+    summarize_focus   TEXT,          -- user-supplied topic/angle
+    sections_json     TEXT,          -- JSON array of { title, start_secs }
+    pub_date          TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+When `transcript` is non-null the TTS stage speaks it; otherwise `cleaned_text`.
+
+### `jobs`
+
+```sql
+CREATE TABLE jobs (
+    id          TEXT PRIMARY KEY,    -- UUID
+    episode_id  TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+    job_type    TEXT NOT NULL,       -- 'scrape','pdf','clean','summarize','tts','image'
+    status      TEXT NOT NULL DEFAULT 'queued',  -- 'queued','running','done','error'
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    run_after   TEXT NOT NULL DEFAULT (datetime('now')),
+    error_msg   TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Worker pulls `WHERE status='queued' AND run_after<=datetime('now')`. Retry
+backoff is exponential (2, 4, 8… minutes) up to `MAX_JOB_ATTEMPTS` (default 3).
+Errors matching an upstream-outage pattern (`503`, `service unavailable`,
+`overloaded`, `unavailable`) defer 30min without consuming an attempt.
+
+### `ai_usage`
+
+```sql
+CREATE TABLE ai_usage (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    episode_id    TEXT REFERENCES episodes(id) ON DELETE CASCADE,
+    feed_id       TEXT REFERENCES feeds(id) ON DELETE SET NULL,
+    stage         TEXT NOT NULL,
+    provider      TEXT NOT NULL,     -- 'claude', 'gemini', 'google_tts'
+    model         TEXT NOT NULL,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,  -- character count for google_tts
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Recorded by every AI call through the pipeline. Failures to insert are logged
+and swallowed (never break the pipeline). Query via the admin endpoints or
+the `tts-cli costs` command.
+
+## CLI costs subcommand
+
+`tts-cli costs` hits `/api/v1/admin/usage` or the per-episode variant and
+prints a formatted table. Reads `SERVER_URL` and `ADMIN_TOKEN` from env, or
+takes `--server` / `--token` flags. Use `--days N` for a time window, or
+`--episode <id>` for per-episode breakdown.
+
+## Timestamps
+
+All `created_at`, `pub_date`, `run_after`, and `retry_at` values are stored as
+UTC (`datetime('now')`) with no timezone marker. Clients should append `Z`
+before parsing (the frontend does this; external clients must too).

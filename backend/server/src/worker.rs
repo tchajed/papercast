@@ -134,8 +134,12 @@ async fn execute_job(worker_id: usize, job: Job, pool: &SqlitePool, config: &App
             tracing::error!("Job {} failed: {e:?}", job.id);
             // Image and describe failures are non-fatal
             let non_fatal = matches!(job.job_type.as_str(), "image" | "describe");
+            // `{e:#}` prints the full anyhow context chain separated by
+            // ": ", so the underlying cause (e.g. the HTTP status/body from
+            // Google TTS) is preserved in `episodes.error_msg`.
+            let msg = format!("{e:#}");
             if let Err(e2) =
-                fail_job(pool, &job, &e.to_string(), config.max_job_attempts, non_fatal).await
+                fail_job(pool, &job, &msg, config.max_job_attempts, non_fatal).await
             {
                 tracing::error!("Failed to record job failure {}: {e2}", job.id);
             }

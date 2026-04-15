@@ -125,6 +125,27 @@ enum Command {
         #[arg(long, default_value = "claude")]
         provider: String,
     },
+
+    /// Query the admin /usage endpoint on a deployed server and print a cost
+    /// breakdown by provider/model/stage. Requires SERVER_URL and ADMIN_TOKEN
+    /// env vars (or --server / --token flags).
+    Costs {
+        /// Server base URL (e.g. https://podcast.example.com).
+        #[arg(long, env = "SERVER_URL")]
+        server: String,
+
+        /// Admin bearer token.
+        #[arg(long, env = "ADMIN_TOKEN")]
+        token: String,
+
+        /// Optional window in days (default: all time).
+        #[arg(long)]
+        days: Option<i64>,
+
+        /// Episode ID: when set, show per-episode breakdown instead of summary.
+        #[arg(long)]
+        episode: Option<String>,
+    },
 }
 
 fn make_provider(name: &str) -> Result<tts_lib::Provider> {
@@ -161,11 +182,18 @@ fn google_studio_key() -> Result<String> {
 }
 
 async fn extract_pdf(pdf_path: &str, extractor: &str) -> Result<tts_lib::Document> {
-    match extractor {
-        "claude" => tts_lib::pdf::extract(pdf_path, &anthropic_key()?).await,
-        "gemini" => tts_lib::pdf_gemini::extract(pdf_path, &google_studio_key()?).await,
+    let (doc, usages) = match extractor {
+        "claude" => tts_lib::pdf::extract(pdf_path, &anthropic_key()?).await?,
+        "gemini" => tts_lib::pdf_gemini::extract(pdf_path, &google_studio_key()?).await?,
         other => anyhow::bail!("Unknown extractor: {other} (expected claude or gemini)"),
+    };
+    for u in &usages {
+        eprintln!(
+            "usage: {} {} input={} output={}",
+            u.provider, u.model, u.input_tokens, u.output_tokens
+        );
     }
+    Ok(doc)
 }
 
 #[tokio::main]
@@ -194,21 +222,24 @@ async fn main() -> Result<()> {
         Command::Clean { provider } => {
             let doc = read_stdin_document()?;
             let provider = make_provider(&provider)?;
-            let doc = tts_lib::clean::clean(&doc, &provider).await?;
+            let (doc, usage) = tts_lib::clean::clean(&doc, &provider).await?;
+            eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
             print_document(&doc)?;
         }
 
         Command::Summarize { provider, focus } => {
             let doc = read_stdin_document()?;
             let provider = make_provider(&provider)?;
-            let doc = tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
+            let (doc, usage) = tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
+            eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
             print_document(&doc)?;
         }
 
         Command::Describe { provider } => {
             let doc = read_stdin_document()?;
             let provider = make_provider(&provider)?;
-            let description = tts_lib::describe::describe(&doc, &provider).await?;
+            let (description, usage) = tts_lib::describe::describe(&doc, &provider).await?;
+            eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
             println!("{description}");
         }
 
@@ -220,9 +251,11 @@ async fn main() -> Result<()> {
                 .or(doc.transcript.as_deref())
                 .context("No cleaned_text or transcript in input")?;
             let provider = make_provider(&provider)?;
-            let summary = tts_lib::image::visual_summary(text, &provider).await?;
+            let (summary, summary_usage) = tts_lib::image::visual_summary(text, &provider).await?;
             eprintln!("Visual brief: {summary}");
-            let image = tts_lib::image::generate_image(&google_studio_key()?, &summary).await?;
+            eprintln!("usage: {} {} input={} output={}", summary_usage.provider, summary_usage.model, summary_usage.input_tokens, summary_usage.output_tokens);
+            let (image, image_usage) = tts_lib::image::generate_image(&google_studio_key()?, &summary).await?;
+            eprintln!("usage: {} {} input={} output={}", image_usage.provider, image_usage.model, image_usage.input_tokens, image_usage.output_tokens);
             let ext = match image.mime_type.as_str() {
                 "image/png" => "png",
                 "image/jpeg" => "jpg",
@@ -288,7 +321,8 @@ async fn main() -> Result<()> {
 
             // Stage 2: Clean
             eprintln!("--- Clean ---");
-            doc = tts_lib::clean::clean(&doc, &provider).await?;
+            let (new_doc, _clean_usage) = tts_lib::clean::clean(&doc, &provider).await?;
+            doc = new_doc;
             eprintln!(
                 "Cleaned text: {} words",
                 doc.word_count.unwrap_or(0)
@@ -302,7 +336,8 @@ async fn main() -> Result<()> {
             // Stage 3: Summarize (optional)
             if summarize {
                 eprintln!("--- Summarize ---");
-                doc = tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
+                let (new_doc, _sum_usage) = tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
+                doc = new_doc;
                 eprintln!(
                     "Transcript: {} words",
                     doc.word_count.unwrap_or(0)
@@ -326,8 +361,103 @@ async fn main() -> Result<()> {
                 output, result.chunks_total, result.duration_secs
             );
         }
+
+        Command::Costs { server, token, days, episode } => {
+            run_costs(&server, &token, days, episode.as_deref()).await?;
+        }
     }
 
+    Ok(())
+}
+
+async fn run_costs(
+    server: &str,
+    token: &str,
+    days: Option<i64>,
+    episode: Option<&str>,
+) -> Result<()> {
+    let server = server.trim_end_matches('/');
+    let client = reqwest::Client::new();
+
+    if let Some(ep) = episode {
+        #[derive(serde::Deserialize)]
+        struct Row {
+            stage: String,
+            provider: String,
+            model: String,
+            input_tokens: i64,
+            output_tokens: i64,
+            created_at: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Resp {
+            rows: Vec<Row>,
+            estimated_usd: f64,
+        }
+        let url = format!("{server}/api/v1/admin/usage/episode/{ep}");
+        let resp: Resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        println!("{:<14} {:<10} {:<28} {:>10} {:>10}  {}", "stage", "provider", "model", "input", "output", "when");
+        for r in &resp.rows {
+            println!(
+                "{:<14} {:<10} {:<28} {:>10} {:>10}  {}",
+                r.stage, r.provider, r.model, r.input_tokens, r.output_tokens, r.created_at
+            );
+        }
+        println!("\nEstimated total: ${:.4}", resp.estimated_usd);
+        return Ok(());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Group {
+        provider: String,
+        model: String,
+        stage: String,
+        calls: i64,
+        input_tokens: i64,
+        output_tokens: i64,
+    }
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        since: Option<String>,
+        groups: Vec<Group>,
+        total_estimated_usd: f64,
+    }
+
+    let mut url = format!("{server}/api/v1/admin/usage");
+    if let Some(d) = days {
+        url.push_str(&format!("?days={d}"));
+    }
+    let resp: Resp = client
+        .get(&url)
+        .bearer_auth(token)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    match &resp.since {
+        Some(s) => println!("Usage over last {s}:"),
+        None => println!("Usage (all time):"),
+    }
+    println!(
+        "{:<12} {:<28} {:<14} {:>6} {:>12} {:>12}",
+        "provider", "model", "stage", "calls", "input", "output"
+    );
+    for g in &resp.groups {
+        println!(
+            "{:<12} {:<28} {:<14} {:>6} {:>12} {:>12}",
+            g.provider, g.model, g.stage, g.calls, g.input_tokens, g.output_tokens
+        );
+    }
+    println!("\nEstimated total: ${:.4}", resp.total_estimated_usd);
     Ok(())
 }
 

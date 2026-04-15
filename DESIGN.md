@@ -64,7 +64,7 @@ SQLite with WAL mode. Migrations live in `backend/server/migrations/` and are em
 | feed_id | TEXT | Parent feed |
 | title | TEXT | Article/paper title |
 | source_url | TEXT | Original URL (optional for PDF uploads) |
-| source_type | TEXT | `"article"`, `"arxiv"`, or `"pdf"` |
+| source_type | TEXT | `"article"`, `"arxiv"`, `"pdf"`, or `"markdown"` |
 | raw_text | TEXT | Output of scrape/PDF extraction |
 | cleaned_text | TEXT | Output of the clean stage |
 | transcript | TEXT | Summarized version (when `summarize = 1`) |
@@ -95,6 +95,23 @@ The API decorates each episode with a derived `retry_at` field — the `run_afte
 
 The worker runs jobs inline (no `spawn`) to avoid concurrent SQLite writers. On startup, any job left in `running` (e.g. from a crash or deploy) is reset to `queued` so it's picked up again.
 
+### `ai_usage`
+
+Per-call token/character accounting for cost tracking.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | INTEGER | Primary key |
+| episode_id | TEXT | Target episode (nullable; set for feed-image calls) |
+| feed_id | TEXT | Owning feed (for episode-less calls like feed cover) |
+| stage | TEXT | `clean`, `summarize`, `describe`, `pdf_extract`, `visual_summary`, `image`, `feed_image`, `tts` |
+| provider | TEXT | `claude`, `gemini`, `google_tts` |
+| model | TEXT | Exact model (or TTS voice name) |
+| input_tokens | INTEGER | Character count for `google_tts` |
+| output_tokens | INTEGER | 0 for TTS |
+
+Recorded by every pipeline AI call. Insert failures are logged and swallowed so a billing/telemetry issue never breaks the pipeline.
+
 ## API
 
 Base path: `/api/v1`. Admin endpoints require `Authorization: Bearer $ADMIN_TOKEN`. Token-authed endpoints use the feed's `feed_token` in the URL.
@@ -106,18 +123,30 @@ Base path: `/api/v1`. Admin endpoints require `Authorization: Bearer $ADMIN_TOKE
 | POST | `/api/v1/feeds` | Admin | Create |
 | GET | `/api/v1/feeds` | Admin | List |
 | GET | `/api/v1/feeds/:token` | Token | Feed + episodes |
+| PATCH | `/api/v1/feeds/:token` | Admin | Edit slug/title/description |
 | DELETE | `/api/v1/feeds/:token` | Admin | Delete |
+| POST | `/api/v1/feeds/:token/image` | Admin | Regenerate cover image |
 
 ### Episodes
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/v1/feeds/:token/episodes` | Token | Body: `{ url, summarize?, tts_provider? }` |
-| POST | `/api/v1/feeds/:token/episodes/pdf` | Token | Multipart: `file`, `title?`, `source_url?`, `summarize?` |
+| POST | `/api/v1/feeds/:token/episodes` | Token | Body: `{ url, summarize?, summarize_focus?, tts_provider? }` |
+| POST | `/api/v1/feeds/:token/episodes/pdf` | Token | Multipart: `file` (PDF or `.md`/`.txt`), `title?`, `source_url?`, `summarize?`, `summarize_focus?` |
+| POST | `/api/v1/feeds/:token/episodes/text` | Token | Body: `{ title, text, source_url?, summarize?, summarize_focus?, tts_provider? }` |
 | GET | `/api/v1/feeds/:token/episodes/:id` | Token | Includes progress and status |
-| GET | `/api/v1/feeds/:token/episodes/:id/text` | Token | Raw / cleaned / transcript text |
+| GET | `/api/v1/feeds/:token/episodes/:id/text` | Token | Raw / cleaned / transcript text + sections |
 | POST | `/api/v1/feeds/:token/episodes/:id/retry` | Token | Re-queue a failed episode from its last successful stage |
 | DELETE | `/api/v1/feeds/:token/episodes/:id` | Token | Delete (also removes storage objects) |
+
+### Admin / monitoring
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/admin/status` | Admin | Counts of episode statuses + queued/running jobs |
+| GET | `/api/v1/admin/jobs` | Admin | Active jobs joined with episode title + feed slug |
+| GET | `/api/v1/admin/usage?days=N` | Admin | Usage grouped by provider/model/stage + estimated USD |
+| GET | `/api/v1/admin/usage/episode/:id` | Admin | Per-episode usage rows + estimated USD |
 
 ### RSS
 
@@ -209,7 +238,7 @@ SvelteKit (Svelte 5) built with `adapter-static` and served by Axum from `STATIC
 
 1. `/` — admin view with feed list, create/delete.
 2. `/feeds/[token]` — submission form (URL or PDF upload, with summarize checkbox), episode list, status polling every 5 seconds.
-3. `/feeds/[token]/episodes/[id]` — audio player, cover image, metadata, retry button.
+3. `/feeds/[token]/episodes/[id]` — audio player, cover image, metadata, chapter list (seek on click), retry button, delete button.
 
 ## Configuration
 

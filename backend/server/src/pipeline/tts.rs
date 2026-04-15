@@ -41,6 +41,22 @@ pub async fn run(
 
     let result = tts_lib::tts::synthesize(&tts_text, &tts_config, Some(on_progress)).await?;
 
+    // TTS cost is per-character. Record char count in input_tokens for a uniform
+    // usage schema; output_tokens stays 0.
+    crate::usage::record(
+        pool,
+        Some(episode_id),
+        None,
+        "tts",
+        &tts_lib::Usage {
+            provider: "google_tts".into(),
+            model: config.google_tts_voice.clone(),
+            input_tokens: tts_text.chars().count() as u32,
+            output_tokens: 0,
+        },
+    )
+    .await;
+
     let audio_bytes = result.audio.len() as i64;
     let audio_url = storage.upload_episode_audio(episode_id, result.audio).await?;
 

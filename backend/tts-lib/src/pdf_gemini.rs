@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use futures::stream::{self, StreamExt};
 
-use crate::Document;
+use crate::{Document, Usage};
 
 const FIRST_CHUNK_PROMPT: &str = r#"Extract all text from this academic paper for text-to-speech conversion.
 
@@ -39,7 +39,7 @@ pub const DEFAULT_MODEL: &str = "gemini-flash-latest";
 const CHUNK_PAGES: u32 = 4;
 const CHUNK_CONCURRENCY: usize = 8;
 
-pub async fn extract(pdf_path: &str, google_api_key: &str) -> Result<Document> {
+pub async fn extract(pdf_path: &str, google_api_key: &str) -> Result<(Document, Vec<Usage>)> {
     extract_with_model(pdf_path, google_api_key, DEFAULT_MODEL).await
 }
 
@@ -47,7 +47,7 @@ pub async fn extract_with_model(
     pdf_path: &str,
     google_api_key: &str,
     model: &str,
-) -> Result<Document> {
+) -> Result<(Document, Vec<Usage>)> {
     let page_count = pdf_page_count(pdf_path).await?;
     tracing::info!(
         "Extracting PDF via Gemini ({page_count} pages, {CHUNK_PAGES}-page chunks)"
@@ -66,36 +66,40 @@ pub async fn extract_with_model(
         start = end + 1;
     }
 
-    let results: Vec<Result<(u32, String)>> = stream::iter(chunks.into_iter().enumerate())
+    let results: Vec<Result<(u32, String, Option<Usage>)>> = stream::iter(chunks.into_iter().enumerate())
         .map(|(i, (page_start, path))| {
             let api_key = google_api_key.to_string();
             let model = model.to_string();
             async move {
                 let is_first = i == 0;
-                let text = extract_chunk_cached(&path, &api_key, &model, is_first)
+                let (text, usage) = extract_chunk_cached(&path, &api_key, &model, is_first)
                     .await
                     .with_context(|| format!("Chunk starting at page {page_start}"))?;
-                Ok::<_, anyhow::Error>((page_start, text))
+                Ok::<_, anyhow::Error>((page_start, text, usage))
             }
         })
         .buffer_unordered(CHUNK_CONCURRENCY)
         .collect()
         .await;
 
-    let mut indexed: Vec<(u32, String)> = results.into_iter().collect::<Result<_>>()?;
-    indexed.sort_by_key(|(p, _)| *p);
+    let mut indexed: Vec<(u32, String, Option<Usage>)> = results.into_iter().collect::<Result<_>>()?;
+    indexed.sort_by_key(|(p, _, _)| *p);
 
     let _ = tokio::fs::remove_dir_all(&work_dir).await;
 
     let (title, first_text) = match indexed.first() {
-        Some((_, t)) => parse_title_and_text(t),
+        Some((_, t, _)) => parse_title_and_text(t),
         None => bail!("No chunks produced from PDF"),
     };
 
     let mut pieces: Vec<String> = Vec::with_capacity(indexed.len());
+    let mut usages: Vec<Usage> = Vec::new();
+    let first_usage = indexed.first().and_then(|(_, _, u)| u.clone());
+    if let Some(u) = first_usage { usages.push(u); }
     pieces.push(first_text);
-    for (_, text) in indexed.into_iter().skip(1) {
+    for (_, text, usage) in indexed.into_iter().skip(1) {
         pieces.push(text.trim().to_string());
+        if let Some(u) = usage { usages.push(u); }
     }
     let raw_text = pieces.join("\n\n");
 
@@ -105,12 +109,12 @@ pub async fn extract_with_model(
 
     tracing::info!("Gemini extracted {} chars from {page_count} pages", raw_text.len());
 
-    Ok(Document {
+    Ok((Document {
         title: Some(title),
         source_type: "pdf".to_string(),
         raw_text: Some(raw_text),
         ..Default::default()
-    })
+    }, usages))
 }
 
 /// Remove any `*_chunks` working directories under `parent_dir` whose mtime is
@@ -220,17 +224,17 @@ async fn extract_chunk_cached(
     google_api_key: &str,
     model: &str,
     is_first: bool,
-) -> Result<String> {
+) -> Result<(String, Option<Usage>)> {
     let cache_path = cache_path_for(chunk_path);
     if let Ok(cached) = tokio::fs::read_to_string(&cache_path).await {
         tracing::info!("Reusing cached chunk extraction: {cache_path}");
-        return Ok(cached);
+        return Ok((cached, None));
     }
-    let text = extract_chunk(chunk_path, google_api_key, model, is_first).await?;
+    let (text, usage) = extract_chunk(chunk_path, google_api_key, model, is_first).await?;
     if let Err(e) = tokio::fs::write(&cache_path, &text).await {
         tracing::warn!("Failed to write chunk cache {cache_path}: {e}");
     }
-    Ok(text)
+    Ok((text, Some(usage)))
 }
 
 async fn extract_chunk(
@@ -238,7 +242,7 @@ async fn extract_chunk(
     google_api_key: &str,
     model: &str,
     is_first: bool,
-) -> Result<String> {
+) -> Result<(String, Usage)> {
     let pdf_bytes = tokio::fs::read(chunk_path)
         .await
         .with_context(|| format!("Failed to read chunk {chunk_path}"))?;
@@ -284,7 +288,14 @@ async fn extract_chunk(
             tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
         }
         match try_extract_chunk(&client, &url, &request).await {
-            Ok(text) => return Ok(text),
+            Ok((text, usage)) => {
+                return Ok((text, Usage {
+                    provider: "gemini".into(),
+                    model: model.to_string(),
+                    input_tokens: usage.0,
+                    output_tokens: usage.1,
+                }));
+            }
             Err(ChunkError { transient, source }) => {
                 if !transient || attempt + 1 == backoffs_ms.len() {
                     return Err(source);
@@ -308,7 +319,7 @@ async fn try_extract_chunk(
     client: &reqwest::Client,
     url: &str,
     request: &serde_json::Value,
-) -> std::result::Result<String, ChunkError> {
+) -> std::result::Result<(String, (u32, u32)), ChunkError> {
     let resp = client
         .post(url)
         .json(request)
@@ -358,7 +369,10 @@ async fn try_extract_chunk(
         });
     }
 
-    Ok(text)
+    let usage_meta = &body["usageMetadata"];
+    let input_tokens = usage_meta["promptTokenCount"].as_u64().unwrap_or(0) as u32;
+    let output_tokens = usage_meta["candidatesTokenCount"].as_u64().unwrap_or(0) as u32;
+    Ok((text, (input_tokens, output_tokens)))
 }
 
 fn parse_title_and_text(full: &str) -> (String, String) {

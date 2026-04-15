@@ -307,11 +307,12 @@ async fn regenerate_feed_image(
         format!("{}. {}", feed.title, feed.description)
     };
 
-    let image = tts_lib::image::generate_feed_cover(
+    let (image, img_usage) = tts_lib::image::generate_feed_cover(
         &state.config.google_studio_api_key,
         &brief,
     )
     .await?;
+    crate::usage::record(&state.pool, None, Some(&feed.id), "feed_image", &img_usage).await;
 
     let image_url = state
         .storage
