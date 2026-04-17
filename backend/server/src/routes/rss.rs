@@ -3,8 +3,9 @@ use axum::{
     http::header,
     response::IntoResponse,
     routing::get,
-    Router,
+    Json, Router,
 };
+use serde::Serialize;
 use sqlx::FromRow;
 use time::{
     format_description::well_known::Rfc2822, PrimitiveDateTime, UtcOffset,
@@ -14,7 +15,12 @@ use crate::error::{AppError, AppResult};
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/feed/{feed_token}/rss.xml", get(rss_feed))
+    Router::new()
+        .route("/feed/{feed_token}/rss.xml", get(rss_feed))
+        .route(
+            "/feed/{feed_token}/episodes/{episode_id}/chapters.json",
+            get(chapters_json),
+        )
 }
 
 #[derive(FromRow)]
@@ -107,6 +113,19 @@ async fn rss_feed(
             String::new()
         };
 
+        let chapters_tag = if has_chapters(ep.sections_json.as_deref()) {
+            let url = format!(
+                "{}/feed/{}/episodes/{}/chapters.json",
+                state.config.public_url, feed.feed_token, ep.id,
+            );
+            format!(
+                "\n      <podcast:chapters url=\"{}\" type=\"application/json+chapters\"/>",
+                xml_escape(&url)
+            )
+        } else {
+            String::new()
+        };
+
         items.push_str(&format!(
             r#"    <item>
       <title>{title}</title>
@@ -114,7 +133,7 @@ async fn rss_feed(
       <pubDate>{pub_date}</pubDate>
       <description>{description}</description>
       <enclosure url="{audio_url}" length="{length}" type="audio/mpeg"/>
-      <itunes:duration>{duration}</itunes:duration>{image_tag}
+      <itunes:duration>{duration}</itunes:duration>{image_tag}{chapters_tag}
     </item>
 "#,
             title = xml_escape(&display_title(&ep.title, ep.summarize)),
@@ -125,6 +144,7 @@ async fn rss_feed(
             length = length,
             duration = duration,
             image_tag = image_tag,
+            chapters_tag = chapters_tag,
         ));
     }
 
@@ -143,7 +163,7 @@ async fn rss_feed(
 
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom">
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:podcast="https://podcastindex.org/namespace/1.0">
   <channel>
     <title>{title}</title>
     <description>{description}</description>
@@ -249,6 +269,71 @@ fn format_rfc2822(s: &str) -> Option<String> {
     .ok()?;
     let primitive = PrimitiveDateTime::parse(s, &fmt).ok()?;
     primitive.assume_offset(UtcOffset::UTC).format(&Rfc2822).ok()
+}
+
+/// Podcasting 2.0 JSON Chapters spec: https://podcasting2.org/podcast-namespace/tags/chapters
+#[derive(Serialize)]
+struct JsonChapters {
+    version: &'static str,
+    chapters: Vec<JsonChapter>,
+}
+
+#[derive(Serialize)]
+struct JsonChapter {
+    #[serde(rename = "startTime")]
+    start_time: f64,
+    title: String,
+}
+
+fn has_chapters(sections_json: Option<&str>) -> bool {
+    sections_json
+        .and_then(|s| serde_json::from_str::<Vec<tts_lib::tts::Section>>(s).ok())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+}
+
+async fn chapters_json(
+    State(state): State<AppState>,
+    Path((feed_token, episode_id)): Path<(String, String)>,
+) -> AppResult<impl IntoResponse> {
+    let sections_json = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT e.sections_json
+         FROM episodes e
+         JOIN feeds f ON f.id = e.feed_id
+         WHERE f.feed_token = $1 AND e.id = $2",
+    )
+    .bind(&feed_token)
+    .bind(&episode_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let sections: Vec<tts_lib::tts::Section> = sections_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    let body = JsonChapters {
+        version: "1.2.0",
+        chapters: sections
+            .into_iter()
+            .map(|s| JsonChapter {
+                start_time: s.start_secs,
+                title: s.title,
+            })
+            .collect(),
+    };
+
+    Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/json+chapters; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "max-age=300"),
+        ],
+        Json(body),
+    ))
 }
 
 /// Render stored sections JSON into a human-readable chapter list, one line

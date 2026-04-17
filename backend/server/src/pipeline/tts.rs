@@ -63,8 +63,12 @@ pub async fn run(
     )
     .await;
 
-    let audio_bytes = result.audio.len() as i64;
-    let audio_url = storage.upload_episode_audio(episode_id, result.audio).await?;
+    let audio_with_chapters =
+        tts_lib::tts::embed_chapters(&result.audio, &result.sections, result.duration_secs)?;
+    let audio_bytes = audio_with_chapters.len() as i64;
+    let audio_url = storage
+        .upload_episode_audio(episode_id, audio_with_chapters)
+        .await?;
 
     let sections_json = if result.sections.is_empty() {
         None

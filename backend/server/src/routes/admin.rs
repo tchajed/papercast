@@ -4,7 +4,7 @@
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Serialize;
@@ -19,6 +19,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/admin/jobs", get(list_jobs))
         .route("/api/v1/admin/usage", get(usage_summary))
         .route("/api/v1/admin/usage/episode/{episode_id}", get(usage_for_episode))
+        .route(
+            "/api/v1/admin/episodes/{episode_id}/backfill-chapters",
+            post(backfill_chapters),
+        )
 }
 
 fn require_admin(headers: &HeaderMap, admin_token: &str) -> AppResult<()> {
@@ -242,4 +246,83 @@ async fn usage_for_episode(
             estimated_usd,
         }),
     ))
+}
+
+#[derive(Serialize)]
+struct BackfillChaptersResponse {
+    episode_id: String,
+    old_audio_url: String,
+    new_audio_url: String,
+    chapters: usize,
+    audio_bytes: i64,
+}
+
+async fn backfill_chapters(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(episode_id): Path<String>,
+) -> AppResult<Json<BackfillChaptersResponse>> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    let (audio_url, sections_json, duration_secs) =
+        sqlx::query_as::<_, (Option<String>, Option<String>, Option<i32>)>(
+            "SELECT audio_url, sections_json, duration_secs FROM episodes WHERE id = $1",
+        )
+        .bind(&episode_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let audio_url = audio_url.ok_or_else(|| AppError::BadRequest("episode has no audio_url".into()))?;
+    let sections_json = sections_json
+        .ok_or_else(|| AppError::BadRequest("episode has no sections_json".into()))?;
+    let sections: Vec<tts_lib::tts::Section> = serde_json::from_str(&sections_json)
+        .map_err(|e| AppError::BadRequest(format!("invalid sections_json: {e}")))?;
+    if sections.is_empty() {
+        return Err(AppError::BadRequest("episode has no chapters".into()));
+    }
+    let duration = duration_secs.unwrap_or(0) as u32;
+
+    let resp = reqwest::get(&audio_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("fetch existing mp3: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(AppError::BadRequest(format!(
+            "fetch existing mp3: status {}",
+            resp.status()
+        )));
+    }
+    let existing = resp
+        .bytes()
+        .await
+        .map_err(|e| anyhow::anyhow!("read mp3 body: {e}"))?;
+
+    let with_chapters =
+        tts_lib::tts::embed_chapters(&existing, &sections, duration)?;
+    let audio_bytes = with_chapters.len() as i64;
+    let new_audio_url = state
+        .storage
+        .upload_episode_audio(&episode_id, with_chapters)
+        .await?;
+
+    sqlx::query("UPDATE episodes SET audio_url = $1, audio_bytes = $2 WHERE id = $3")
+        .bind(&new_audio_url)
+        .bind(audio_bytes)
+        .bind(&episode_id)
+        .execute(&state.pool)
+        .await?;
+
+    if new_audio_url != audio_url {
+        if let Err(e) = state.storage.delete_object(&audio_url).await {
+            tracing::warn!("failed to delete old audio {audio_url}: {e}");
+        }
+    }
+
+    Ok(Json(BackfillChaptersResponse {
+        episode_id,
+        old_audio_url: audio_url,
+        new_audio_url,
+        chapters: sections.len(),
+        audio_bytes,
+    }))
 }

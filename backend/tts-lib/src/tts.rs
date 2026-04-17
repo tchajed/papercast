@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use bytes::Bytes;
 use futures::stream::{self, StreamExt};
+use id3::frame::{Chapter, Frame, TableOfContents};
+use id3::{Tag, TagLike, Version};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -223,6 +225,52 @@ pub async fn synthesize(
         chunks_total: total_chunks,
         sections,
     })
+}
+
+/// Prepend an ID3v2.3 tag with CHAP + CTOC frames so podcast apps that read
+/// embedded chapters (Overcast, Apple Podcasts pre-2025) show them. Clients
+/// walk past the tag to find the first MP3 sync frame, so the returned bytes
+/// are still playable.
+pub fn embed_chapters(audio: &[u8], sections: &[Section], total_duration_secs: u32) -> Result<Bytes> {
+    if sections.is_empty() {
+        return Ok(Bytes::copy_from_slice(audio));
+    }
+    let total_ms = total_duration_secs.saturating_mul(1000);
+    let mut tag = Tag::new();
+    let mut element_ids: Vec<String> = Vec::with_capacity(sections.len());
+    for (i, s) in sections.iter().enumerate() {
+        let element_id = format!("ch{i}");
+        element_ids.push(element_id.clone());
+        let start_ms = (s.start_secs * 1000.0).max(0.0) as u32;
+        let end_ms = sections
+            .get(i + 1)
+            .map(|n| (n.start_secs * 1000.0).max(0.0) as u32)
+            .unwrap_or(total_ms);
+        let title_frame = Frame::text("TIT2", s.title.clone());
+        let chap = Chapter {
+            element_id,
+            start_time: start_ms,
+            end_time: end_ms.max(start_ms),
+            start_offset: u32::MAX,
+            end_offset: u32::MAX,
+            frames: vec![title_frame],
+        };
+        tag.add_frame(Frame::from(chap));
+    }
+    let toc = TableOfContents {
+        element_id: "toc".to_string(),
+        top_level: true,
+        ordered: true,
+        elements: element_ids,
+        frames: Vec::new(),
+    };
+    tag.add_frame(Frame::from(toc));
+
+    let mut buf: Vec<u8> = Vec::with_capacity(audio.len() + 1024);
+    tag.write_to(&mut buf, Version::Id3v23)
+        .context("Failed to write ID3v2 chapter tag")?;
+    buf.extend_from_slice(audio);
+    Ok(Bytes::from(buf))
 }
 
 #[derive(Debug, Clone)]
@@ -517,6 +565,34 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert!(chunks[0].append_pause, "end of non-final section should pause");
         assert!(!chunks[1].append_pause, "final section does not pause");
+    }
+
+    #[test]
+    fn test_embed_chapters_round_trip() {
+        let audio = b"\xff\xfb\x90\x00fake-mp3-frames";
+        let sections = vec![
+            Section { title: "Intro".into(), start_secs: 0.0 },
+            Section { title: "Middle".into(), start_secs: 12.5 },
+            Section { title: "Outro".into(), start_secs: 42.0 },
+        ];
+        let out = embed_chapters(audio, &sections, 60).unwrap();
+        assert_eq!(&out[..3], b"ID3", "must start with ID3v2 magic");
+        let tag = Tag::read_from2(&mut std::io::Cursor::new(&out[..])).unwrap();
+        let chaps: Vec<&Chapter> = tag.chapters().collect();
+        assert_eq!(chaps.len(), 3);
+        assert_eq!(chaps[0].start_time, 0);
+        assert_eq!(chaps[0].end_time, 12_500);
+        assert_eq!(chaps[1].start_time, 12_500);
+        assert_eq!(chaps[1].end_time, 42_000);
+        assert_eq!(chaps[2].start_time, 42_000);
+        assert_eq!(chaps[2].end_time, 60_000);
+    }
+
+    #[test]
+    fn test_embed_chapters_empty_passes_through() {
+        let audio = b"\xff\xfb\x90\x00fake";
+        let out = embed_chapters(audio, &[], 10).unwrap();
+        assert_eq!(&out[..], audio);
     }
 
     #[test]
