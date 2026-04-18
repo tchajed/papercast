@@ -11,6 +11,10 @@ use std::sync::Arc;
 
 const TTS_CONCURRENCY: usize = 4;
 const MAX_CHUNK_CHARS: usize = 4000;
+/// Google TTS rejects individual sentences longer than ~900 chars with
+/// "This request contains sentences that are too long." Anything beyond
+/// this is split at secondary punctuation (see `split_long_sentence`).
+const MAX_SENTENCE_CHARS: usize = 900;
 
 /// 1.5s of silence (24 kHz mono MP3) appended between sections. Used instead
 /// of an SSML `<break>` because Journey voices (the default in production)
@@ -441,6 +445,81 @@ fn split_sentences(text: &str) -> Vec<String> {
         sentences.push(current);
     }
     sentences
+        .into_iter()
+        .flat_map(split_long_sentence)
+        .collect()
+}
+
+/// Split a sentence exceeding `MAX_SENTENCE_CHARS` at secondary punctuation
+/// (`;`, `:`, `,`, or `\n`), converting the break into `. ` so Google TTS
+/// parses the pieces as separate sentences. Falls back to a word-boundary
+/// hard split if no secondary punctuation fits.
+fn split_long_sentence(sentence: String) -> Vec<String> {
+    if sentence.len() <= MAX_SENTENCE_CHARS {
+        return vec![sentence];
+    }
+    let mut pieces = Vec::new();
+    let mut current = String::new();
+    let min_piece = MAX_SENTENCE_CHARS / 2;
+    for ch in sentence.chars() {
+        if matches!(ch, ';' | ':' | ',' | '\n') && current.trim_end().len() >= min_piece {
+            let trimmed = current.trim_end().to_string();
+            pieces.push(format!("{}. ", trimmed));
+            current.clear();
+            continue;
+        }
+        current.push(ch);
+        if current.len() >= MAX_SENTENCE_CHARS {
+            if let Some(cut) = rfind_word_boundary(&current, MAX_SENTENCE_CHARS) {
+                let head: String = current.chars().take(cut).collect();
+                let tail: String = current.chars().skip(cut).collect();
+                pieces.push(format!("{}. ", head.trim_end()));
+                current = tail.trim_start().to_string();
+            }
+        }
+    }
+    if !current.is_empty() {
+        pieces.push(current);
+    }
+    pieces
+        .into_iter()
+        .flat_map(hard_split_if_needed)
+        .collect()
+}
+
+/// Word-boundary split for pieces still over the per-sentence limit.
+fn hard_split_if_needed(piece: String) -> Vec<String> {
+    if piece.len() <= MAX_SENTENCE_CHARS {
+        return vec![piece];
+    }
+    let mut out = Vec::new();
+    let mut remaining = piece;
+    while remaining.len() > MAX_SENTENCE_CHARS {
+        let cut = rfind_word_boundary(&remaining, MAX_SENTENCE_CHARS)
+            .unwrap_or_else(|| remaining.chars().take(MAX_SENTENCE_CHARS).count());
+        let head: String = remaining.chars().take(cut).collect();
+        let tail: String = remaining.chars().skip(cut).collect();
+        out.push(format!("{}. ", head.trim_end()));
+        remaining = tail.trim_start().to_string();
+    }
+    if !remaining.is_empty() {
+        out.push(remaining);
+    }
+    out
+}
+
+/// Return the (char-count) position of the last whitespace boundary whose
+/// byte offset is ≤ `max_bytes`. None if no such boundary exists.
+fn rfind_word_boundary(s: &str, max_bytes: usize) -> Option<usize> {
+    let window_end = max_bytes.min(s.len());
+    // Snap to a char boundary.
+    let mut end = window_end;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    let window = &s[..end];
+    let byte_idx = window.rfind(char::is_whitespace)?;
+    Some(s[..byte_idx].chars().count())
 }
 
 async fn tts_google(
@@ -503,6 +582,39 @@ mod tests {
     fn test_split_sentences_no_punctuation() {
         let result = split_sentences("No ending punctuation");
         assert_eq!(result, vec!["No ending punctuation"]);
+    }
+
+    #[test]
+    fn test_split_sentences_breaks_long_run_on() {
+        // Mimics the failing episode: a "sentence" with colons and commas but
+        // no periods. Every output piece must be ≤ MAX_SENTENCE_CHARS.
+        let segment = "Define the strategy by doing X across the enterprise";
+        let long = format!(
+            "Our strategic priorities are: {}",
+            std::iter::repeat(segment).take(40).collect::<Vec<_>>().join(", ")
+        );
+        assert!(long.len() > MAX_SENTENCE_CHARS);
+        let pieces = split_sentences(&long);
+        assert!(pieces.len() > 1, "expected multi-piece split, got {}", pieces.len());
+        for p in &pieces {
+            assert!(
+                p.len() <= MAX_SENTENCE_CHARS,
+                "piece over limit: {} chars",
+                p.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_split_sentences_hard_split_no_punctuation() {
+        // Run-on with no secondary punctuation at all — falls back to word
+        // boundaries. Just needs to terminate and respect the limit.
+        let long: String = std::iter::repeat("word ").take(400).collect();
+        assert!(long.len() > MAX_SENTENCE_CHARS);
+        let pieces = split_sentences(&long);
+        for p in &pieces {
+            assert!(p.len() <= MAX_SENTENCE_CHARS);
+        }
     }
 
     #[test]
