@@ -4,6 +4,14 @@
 	import Toast from '$lib/Toast.svelte';
 	import { Plus, Rss, Pencil, ImagePlus, Trash2, Save, X } from 'lucide-svelte';
 
+	const urlToken = new URLSearchParams(window.location.search).get('token');
+	if (urlToken) {
+		localStorage.setItem('adminToken', urlToken);
+		// Remove token from URL without adding to browser history
+		const url = new URL(window.location.href);
+		url.searchParams.delete('token');
+		window.history.replaceState({}, '', url);
+	}
 	let adminToken = $state(localStorage.getItem('adminToken') ?? '');
 	let feeds = $state<Feed[]>([]);
 	let error = $state('');
