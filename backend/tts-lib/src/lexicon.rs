@@ -30,44 +30,39 @@ impl LexiconEntry {
     }
 }
 
-/// Built-in seed lexicon for technical terms that Google Chirp3-HD mispronounces
-/// or reads letter-by-letter. Extend by appending to this list; the ordering
-/// matters only for overlapping terms (earlier entries win).
+/// Seed lexicon parsed from `lexicon.txt`. The data file is embedded at
+/// compile time — edits require a rebuild, but the TSV is much easier to
+/// skim and edit than a Rust literal.
 pub fn default_lexicon() -> Vec<LexiconEntry> {
-    // Each row is (term-as-written, how-to-say-it). Keep replacements lowercase
-    // unless you need a capital to force a stress — Chirp3-HD treats capitals
-    // as ordinary letters, not as acronym signals.
-    let pairs: &[(&str, &str)] = &[
-        // Proof assistants / PL tools
-        ("Coq", "coke"),
-        ("Pkl", "pickle"),
-        ("Dhall", "dee-hall"),
-        ("CEL", "sell"),
-        ("Aeneas", "uh-nee-us"),
-        ("Creusot", "kruh-zoh"),
-        ("MIR", "meer"),
-        ("ITree", "eye-tree"),
-        ("ITrees", "eye-trees"),
-        // Storage / systems
-        ("POSIX", "pozzix"),
-        ("NUMA", "new-muh"),
-        ("NASD", "nasd"),
-        ("RAIDs", "raids"),
-        // Data formats / DBs
-        ("YAML", "yammel"),
-        ("NoSQL", "no sequel"),
-        ("MySQL", "my sequel"),
-        ("SQLite", "sequel light"),
-        ("PostgreSQL", "postgres"),
-        // Common web / repo names
-        ("arXiv", "archive"),
-        ("ArXiv", "archive"),
-        ("arxiv", "archive"),
-    ];
-    pairs
-        .iter()
-        .map(|(t, r)| LexiconEntry::new(*t, *r))
-        .collect()
+    parse(include_str!("lexicon.txt"))
+}
+
+/// Parse the TSV-ish lexicon format: one entry per line, `term\treplacement`,
+/// with `#`-prefixed comments and blank lines skipped. Malformed lines panic
+/// — the input is a compile-time string, so any error is a bug in the seed
+/// file and we want it caught at startup, not silently dropped.
+fn parse(src: &str) -> Vec<LexiconEntry> {
+    let mut out = Vec::new();
+    for (lineno, raw) in src.lines().enumerate() {
+        let line = raw.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (term, replacement) = line.split_once('\t').unwrap_or_else(|| {
+            panic!(
+                "lexicon line {}: expected `term<TAB>replacement`, got `{}`",
+                lineno + 1,
+                line
+            )
+        });
+        let term = term.trim();
+        let replacement = replacement.trim();
+        if term.is_empty() {
+            panic!("lexicon line {}: empty term", lineno + 1);
+        }
+        out.push(LexiconEntry::new(term, replacement));
+    }
+    out
 }
 
 /// Apply `lexicon` to `text`, returning a new string with whole-word matches
@@ -204,5 +199,22 @@ mod tests {
         assert!(!l.is_empty());
         // Spot-check a representative entry so an accidental deletion trips CI.
         assert!(l.iter().any(|e| e.term == "Coq"));
+    }
+
+    #[test]
+    fn parse_skips_comments_and_blank_lines() {
+        let src = "# a comment\n\nCoq\tcock\n   \n# trailing comment\nMIR\tem eye are\n";
+        let l = parse(src);
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].term, "Coq");
+        assert_eq!(l[0].replacement, "cock");
+        assert_eq!(l[1].term, "MIR");
+        assert_eq!(l[1].replacement, "em eye are");
+    }
+
+    #[test]
+    #[should_panic(expected = "expected `term<TAB>replacement`")]
+    fn parse_rejects_missing_tab() {
+        parse("Coq coke\n");
     }
 }

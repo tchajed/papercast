@@ -1,0 +1,39 @@
+# Pronunciation lexicon for TTS preprocessing. Edit freely and rebuild.
+#
+# Format: <term><TAB><replacement>
+# - Lines starting with `#` and blank lines are ignored.
+# - Matches are case-sensitive and bounded by non-word chars, so `Pkl` does not
+#   match the `Pkl` inside `Pkls`. Add a separate row for each inflection.
+# - To force letter-by-letter reading, spell the letters phonetically
+#   ("pee kay ell"). SSML `<say-as>` in replacements won't work — the output
+#   is XML-escaped before being sent to Google.
+# - Earlier rows win on overlap, so put longer/more-specific terms first
+#   (e.g. `NoSQL` before `SQL`).
+
+# Proof assistants / PL tools
+Coq	cock
+Pkl	pee kay ell
+Dhall	dee-hall
+CEL	sell
+Aeneas	uh-nee-us
+Creusot	kruh-zoh
+MIR	em eye are
+ITrees	eye-trees
+ITree	eye-tree
+
+# Storage / systems
+POSIX	pozzix
+NUMA	new-muh
+RAIDs	raids
+
+# Data formats / DBs
+YAML	yammel
+NoSQL	no sequel
+MySQL	my sequel
+SQLite	sequel light
+PostgreSQL	postgres
+
+# Common web / repo names
+arXiv	archive
+ArXiv	archive
+arxiv	archive
