@@ -58,7 +58,7 @@ impl AppConfig {
             google_studio_api_key: required("GOOGLE_STUDIO_API_KEY"),
             admin_token: required("ADMIN_TOKEN"),
             google_tts_voice: env::var("GOOGLE_TTS_VOICE")
-                .unwrap_or_else(|_| "en-US-Neural2-D".into()),
+                .unwrap_or_else(|_| "en-US-Chirp3-HD-Puck".into()),
             host,
             port,
             worker_poll_interval: env::var("WORKER_POLL_INTERVAL_SECS")

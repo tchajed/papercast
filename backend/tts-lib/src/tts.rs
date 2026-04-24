@@ -34,7 +34,7 @@ impl TtsConfig {
     pub fn new(google_api_key: String) -> Self {
         Self {
             google_api_key,
-            voice: "en-US-Neural2-D".to_string(),
+            voice: "en-US-Chirp3-HD-Puck".to_string(),
         }
     }
 
@@ -528,6 +528,11 @@ fn rfind_word_boundary(s: &str, max_bytes: usize) -> Option<usize> {
 /// Wrap chunk text as SSML with `<p>` per paragraph and `<s>` per sentence.
 /// Paragraphs are separated by blank lines in the source text. XML-special
 /// characters in the sentence bodies are escaped.
+///
+/// Chirp3-HD voices support `<speak>`, `<p>`, and `<s>` but **not** `<mark>`
+/// (per Google's docs). Adding `<mark>` here for transcript timepoint
+/// alignment would silently break Chirp3-HD; fall back to Studio/Neural2
+/// for that use case, or compute offsets externally.
 fn build_ssml(text: &str) -> String {
     let mut out = String::from("<speak>");
     let mut wrote_paragraph = false;

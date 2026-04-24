@@ -144,7 +144,9 @@ fn estimated_cost_usd(u: &UsageGroup) -> f64 {
         ("claude", _) => (3.0, 15.0),
         ("gemini", m) if m.contains("image") => (0.30, 30.0), // image model — output tokens reported as image tokens
         ("gemini", _) => (0.30, 2.50),
-        ("google_tts", _) => (16.0, 0.0), // per 1M chars, Neural2 voices
+        ("google_tts", m) if m.contains("Chirp3-HD") => (30.0, 0.0), // per 1M chars
+        ("google_tts", m) if m.contains("Studio") => (160.0, 0.0),   // per 1M chars
+        ("google_tts", _) => (16.0, 0.0), // per 1M chars, Neural2/WaveNet
         _ => (0.0, 0.0),
     };
     (u.input_tokens as f64 * in_rate + u.output_tokens as f64 * out_rate) / 1_000_000.0

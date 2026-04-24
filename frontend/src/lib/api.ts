@@ -128,7 +128,7 @@ export async function getFeed(feedToken: string): Promise<FeedWithEpisodes> {
 export async function submitEpisode(
 	feedToken: string,
 	url: string,
-	options?: { summarize?: boolean; summarizeFocus?: string }
+	options?: { summarize?: boolean; summarizeFocus?: string; ttsVoice?: string }
 ): Promise<SubmitEpisodeResponse> {
 	return apiFetch(`/api/v1/feeds/${feedToken}/episodes`, {
 		method: 'POST',
@@ -136,6 +136,7 @@ export async function submitEpisode(
 			url,
 			summarize: options?.summarize ?? false,
 			summarize_focus: options?.summarizeFocus,
+			tts_voice: options?.ttsVoice,
 		}),
 	});
 }
@@ -144,7 +145,7 @@ export async function uploadPdf(
 	feedToken: string,
 	file: File,
 	title?: string,
-	options?: { summarize?: boolean; sourceUrl?: string; summarizeFocus?: string }
+	options?: { summarize?: boolean; sourceUrl?: string; summarizeFocus?: string; ttsVoice?: string }
 ): Promise<SubmitEpisodeResponse> {
 	const formData = new FormData();
 	formData.append('file', file);
@@ -152,6 +153,7 @@ export async function uploadPdf(
 	if (options?.summarize) formData.append('summarize', 'true');
 	if (options?.sourceUrl) formData.append('source_url', options.sourceUrl);
 	if (options?.summarizeFocus) formData.append('summarize_focus', options.summarizeFocus);
+	if (options?.ttsVoice) formData.append('tts_voice', options.ttsVoice);
 
 	return apiFetch(`/api/v1/feeds/${feedToken}/episodes/pdf`, {
 		method: 'POST',

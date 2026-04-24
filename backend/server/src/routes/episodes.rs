@@ -42,6 +42,7 @@ pub fn router() -> Router<AppState> {
 pub struct SubmitEpisodeRequest {
     pub url: String,
     pub tts_provider: Option<String>,
+    pub tts_voice: Option<String>,
     #[serde(default)]
     pub summarize: bool,
     pub summarize_focus: Option<String>,
@@ -139,6 +140,22 @@ fn validate_tts_provider(provider: Option<&String>, default: String) -> AppResul
     }
 }
 
+/// Voice IDs the UI is allowed to select. Keep in sync with the frontend
+/// VOICES catalog in src/lib/voices.ts. Unknown voices are rejected at the
+/// API boundary so a typo doesn't reach Google TTS as an opaque 400.
+const SUPPORTED_VOICES: &[&str] = &[
+    "en-US-Chirp3-HD-Puck",
+    "en-US-Chirp3-HD-Kore",
+];
+
+fn validate_tts_voice(voice: Option<&String>) -> AppResult<Option<String>> {
+    match voice.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(v) if SUPPORTED_VOICES.contains(&v) => Ok(Some(v.to_string())),
+        Some(v) => Err(AppError::BadRequest(format!("Invalid tts_voice: {v}"))),
+        None => Ok(None),
+    }
+}
+
 async fn submit_episode(
     State(state): State<AppState>,
     Path(feed_token): Path<String>,
@@ -148,6 +165,7 @@ async fn submit_episode(
     let source_type = detect_source_type(&req.url);
     let default = get_tts_default(&state.pool, &feed_id).await?;
     let tts_provider = validate_tts_provider(req.tts_provider.as_ref(), default)?;
+    let tts_voice = validate_tts_voice(req.tts_voice.as_ref())?;
 
     let title = if source_type == "arxiv" {
         extract_arxiv_id(&req.url)
@@ -163,8 +181,8 @@ async fn submit_episode(
     let mut tx = state.pool.begin().await?;
 
     sqlx::query(
-        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, tts_provider, summarize, summarize_focus, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')",
+        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, tts_provider, tts_voice, summarize, summarize_focus, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')",
     )
     .bind(&episode_id)
     .bind(&feed_id)
@@ -172,6 +190,7 @@ async fn submit_episode(
     .bind(&req.url)
     .bind(source_type)
     .bind(&tts_provider)
+    .bind(&tts_voice)
     .bind(req.summarize as i32)
     .bind(req.summarize_focus.as_deref().map(str::trim).filter(|s| !s.is_empty()))
     .execute(&mut *tx)
@@ -209,6 +228,7 @@ async fn upload_pdf(
     let mut file_name: Option<String> = None;
     let mut title: Option<String> = None;
     let mut tts_provider_field: Option<String> = None;
+    let mut tts_voice_field: Option<String> = None;
     let mut source_url: Option<String> = None;
     let mut summarize = false;
     let mut summarize_focus: Option<String> = None;
@@ -246,6 +266,16 @@ async fn upload_pdf(
                         })?,
                 );
             }
+            "tts_voice" => {
+                tts_voice_field = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| {
+                            AppError::BadRequest(format!("Failed to read tts_voice: {e}"))
+                        })?,
+                );
+            }
             "summarize" => {
                 let val = field.text().await.unwrap_or_default();
                 summarize = val == "true" || val == "1";
@@ -273,6 +303,7 @@ async fn upload_pdf(
     let file_bytes = pdf_bytes.ok_or_else(|| AppError::BadRequest("No file field".into()))?;
     let default = get_tts_default(&state.pool, &feed_id).await?;
     let tts_provider = validate_tts_provider(tts_provider_field.as_ref(), default)?;
+    let tts_voice = validate_tts_voice(tts_voice_field.as_ref())?;
 
     let is_markdown = file_name
         .as_deref()
@@ -299,8 +330,8 @@ async fn upload_pdf(
 
         let mut tx = state.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO episodes (id, feed_id, title, source_url, source_type, raw_text, tts_provider, summarize, summarize_focus, status)
-             VALUES ($1, $2, $3, $4, 'markdown', $5, $6, $7, $8, 'cleaning')",
+            "INSERT INTO episodes (id, feed_id, title, source_url, source_type, raw_text, tts_provider, tts_voice, summarize, summarize_focus, status)
+             VALUES ($1, $2, $3, $4, 'markdown', $5, $6, $7, $8, $9, 'cleaning')",
         )
         .bind(&episode_id)
         .bind(&feed_id)
@@ -308,6 +339,7 @@ async fn upload_pdf(
         .bind(&source_url)
         .bind(&text)
         .bind(&tts_provider)
+        .bind(&tts_voice)
         .bind(summarize as i32)
         .bind(&summarize_focus)
         .execute(&mut *tx)
@@ -343,14 +375,15 @@ async fn upload_pdf(
     let mut tx = state.pool.begin().await?;
 
     sqlx::query(
-        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, tts_provider, summarize, summarize_focus, status)
-         VALUES ($1, $2, $3, $4, 'pdf', $5, $6, $7, 'pending')",
+        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, tts_provider, tts_voice, summarize, summarize_focus, status)
+         VALUES ($1, $2, $3, $4, 'pdf', $5, $6, $7, $8, 'pending')",
     )
     .bind(&episode_id)
     .bind(&feed_id)
     .bind(&title)
     .bind(&source_url)
     .bind(&tts_provider)
+    .bind(&tts_voice)
     .bind(summarize as i32)
     .bind(&summarize_focus)
     .execute(&mut *tx)
@@ -383,6 +416,7 @@ pub struct SubmitTextRequest {
     pub text: String,
     pub source_url: Option<String>,
     pub tts_provider: Option<String>,
+    pub tts_voice: Option<String>,
     #[serde(default)]
     pub summarize: bool,
     pub summarize_focus: Option<String>,
@@ -402,6 +436,7 @@ async fn submit_text(
     }
     let default = get_tts_default(&state.pool, &feed_id).await?;
     let tts_provider = validate_tts_provider(req.tts_provider.as_ref(), default)?;
+    let tts_voice = validate_tts_voice(req.tts_voice.as_ref())?;
     let source_url = req.source_url.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
 
     let episode_id = new_id();
@@ -413,8 +448,8 @@ async fn submit_text(
     // and enqueue a clean job to normalize it for TTS.
     let focus = req.summarize_focus.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     sqlx::query(
-        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, raw_text, tts_provider, summarize, summarize_focus, status)
-         VALUES ($1, $2, $3, $4, 'markdown', $5, $6, $7, $8, 'cleaning')",
+        "INSERT INTO episodes (id, feed_id, title, source_url, source_type, raw_text, tts_provider, tts_voice, summarize, summarize_focus, status)
+         VALUES ($1, $2, $3, $4, 'markdown', $5, $6, $7, $8, $9, 'cleaning')",
     )
     .bind(&episode_id)
     .bind(&feed_id)
@@ -422,6 +457,7 @@ async fn submit_text(
     .bind(&source_url)
     .bind(&req.text)
     .bind(&tts_provider)
+    .bind(&tts_voice)
     .bind(req.summarize as i32)
     .bind(&focus)
     .execute(&mut *tx)

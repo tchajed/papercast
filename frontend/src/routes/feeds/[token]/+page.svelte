@@ -10,6 +10,7 @@
 		type FeedWithEpisodes,
 		type Episode,
 	} from '$lib/api';
+	import { VOICES, DEFAULT_VOICE_ID } from '$lib/voices';
 	import Toast from '$lib/Toast.svelte';
 	import { Rss, Link, FileUp, Plus, FileText, ExternalLink, Clock, AlertCircle, X, Info } from 'lucide-svelte';
 
@@ -27,6 +28,7 @@
 	// TTS options
 	let summarize = $state(false);
 	let summarizeFocus = $state('');
+	let ttsVoice = $state(DEFAULT_VOICE_ID);
 
 	// Toast
 	let toastMessage = $state('');
@@ -74,7 +76,7 @@
 		submitting = true;
 		error = '';
 		try {
-			await submitEpisode(token, submitUrl, { summarize, summarizeFocus: summarizeFocus.trim() || undefined });
+			await submitEpisode(token, submitUrl, { summarize, summarizeFocus: summarizeFocus.trim() || undefined, ttsVoice });
 			submitUrl = '';
 			await loadFeed();
 			startPolling();
@@ -94,6 +96,7 @@
 				summarize,
 				sourceUrl: pdfSourceUrl.trim() || undefined,
 				summarizeFocus: summarizeFocus.trim() || undefined,
+				ttsVoice,
 			});
 			pdfFile = null;
 			pdfTitle = '';
@@ -216,11 +219,21 @@
 					</div>
 				{/if}
 
-				<div class="flex justify-between items-center">
-					<label class="flex items-center gap-2 cursor-pointer text-sm font-medium">
-						<input type="checkbox" class="checkbox checkbox-sm" bind:checked={summarize} />
-						<span>Summarize</span>
-					</label>
+				<div class="flex justify-between items-center gap-3 flex-wrap">
+					<div class="flex items-center gap-4">
+						<label class="flex items-center gap-2 cursor-pointer text-sm font-medium">
+							<input type="checkbox" class="checkbox checkbox-sm" bind:checked={summarize} />
+							<span>Summarize</span>
+						</label>
+						<label class="flex items-center gap-2 text-sm font-medium">
+							<span>Voice</span>
+							<select class="select select-bordered select-sm" bind:value={ttsVoice} disabled={submitting || uploadingPdf}>
+								{#each VOICES as v}
+									<option value={v.id}>{v.label}</option>
+								{/each}
+							</select>
+						</label>
+					</div>
 					<button
 						type="submit"
 						class="btn btn-primary btn-sm"

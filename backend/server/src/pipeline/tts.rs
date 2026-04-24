@@ -9,19 +9,21 @@ pub async fn run(
     config: &AppConfig,
     storage: &StorageClient,
 ) -> Result<()> {
-    let (transcript, cleaned_text) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
-        "SELECT transcript, cleaned_text FROM episodes WHERE id = $1",
-    )
-    .bind(episode_id)
-    .fetch_one(pool)
-    .await?;
+    let (transcript, cleaned_text, episode_voice) =
+        sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+            "SELECT transcript, cleaned_text, tts_voice FROM episodes WHERE id = $1",
+        )
+        .bind(episode_id)
+        .fetch_one(pool)
+        .await?;
 
     let tts_text = transcript
         .or(cleaned_text)
         .context("No text available for TTS")?;
 
+    let voice = episode_voice.unwrap_or_else(|| config.google_tts_voice.clone());
     let tts_config = tts_lib::tts::TtsConfig::new(config.google_tts_api_key.clone())
-        .with_voice(config.google_tts_voice.clone());
+        .with_voice(voice.clone());
 
     // Set up progress tracking
     let pool_clone = pool.clone();
@@ -56,7 +58,7 @@ pub async fn run(
         "tts",
         &tts_lib::Usage {
             provider: "google_tts".into(),
-            model: config.google_tts_voice.clone(),
+            model: voice,
             input_tokens: tts_text.chars().count() as u32,
             output_tokens: 0,
         },

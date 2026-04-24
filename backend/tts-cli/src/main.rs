@@ -84,7 +84,7 @@ enum Command {
         output: String,
 
         /// TTS voice name
-        #[arg(long, default_value = "en-US-Neural2-D")]
+        #[arg(long, default_value = "en-US-Chirp3-HD-Puck")]
         voice: String,
     },
 
@@ -110,7 +110,7 @@ enum Command {
         output: String,
 
         /// TTS voice name
-        #[arg(long, default_value = "en-US-Neural2-D")]
+        #[arg(long, default_value = "en-US-Chirp3-HD-Puck")]
         voice: String,
 
         /// Stop after this stage (extract, clean, summarize) and print JSON
