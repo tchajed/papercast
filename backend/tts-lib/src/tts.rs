@@ -28,6 +28,10 @@ const SECTION_SILENCE_MP3: &[u8] = include_bytes!("silence_1500ms.mp3");
 pub struct TtsConfig {
     pub google_api_key: String,
     pub voice: String,
+    /// Pronunciation substitutions applied to the text before chunking and
+    /// SSML wrapping. Defaults to `lexicon::default_lexicon()`; pass an
+    /// explicit empty vec to disable.
+    pub lexicon: Vec<crate::lexicon::LexiconEntry>,
 }
 
 impl TtsConfig {
@@ -35,11 +39,17 @@ impl TtsConfig {
         Self {
             google_api_key,
             voice: "en-US-Chirp3-HD-Puck".to_string(),
+            lexicon: crate::lexicon::default_lexicon(),
         }
     }
 
     pub fn with_voice(mut self, voice: String) -> Self {
         self.voice = voice;
+        self
+    }
+
+    pub fn with_lexicon(mut self, lexicon: Vec<crate::lexicon::LexiconEntry>) -> Self {
+        self.lexicon = lexicon;
         self
     }
 }
@@ -84,12 +94,21 @@ pub async fn synthesize(
     on_progress: Option<ProgressCallback>,
     cache_dir: Option<String>,
 ) -> Result<TtsResult> {
-    let sections_text = parse_sections(text);
+    // Lexicon runs before section parsing so that substitutions in header
+    // lines (e.g. "## Pkl primer") flow into the section titles used for
+    // chapter markers too.
+    let substituted = if config.lexicon.is_empty() {
+        None
+    } else {
+        Some(crate::lexicon::apply(text, &config.lexicon))
+    };
+    let effective_text: &str = substituted.as_deref().unwrap_or(text);
+    let sections_text = parse_sections(effective_text);
     let has_sections = !sections_text.is_empty() && sections_text.iter().any(|s| s.title.is_some());
     let sections_for_chunking = if sections_text.is_empty() {
         vec![SectionText {
             title: None,
-            body: text.to_string(),
+            body: effective_text.to_string(),
         }]
     } else {
         sections_text
