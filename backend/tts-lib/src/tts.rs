@@ -10,15 +10,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 const TTS_CONCURRENCY: usize = 4;
-const MAX_CHUNK_CHARS: usize = 4000;
+/// Budget for the XML-escaped SSML payload sent to Google (5000-byte hard
+/// limit). Leaves headroom for `<speak>/<p>/<s>` tags, escape expansion
+/// (`&` → `&amp;`), and non-ASCII bytes.
+const MAX_CHUNK_CHARS: usize = 3600;
 /// Google TTS rejects individual sentences longer than ~900 chars with
 /// "This request contains sentences that are too long." Anything beyond
 /// this is split at secondary punctuation (see `split_long_sentence`).
 const MAX_SENTENCE_CHARS: usize = 900;
 
-/// 1.5s of silence (24 kHz mono MP3) appended between sections. Used instead
-/// of an SSML `<break>` because Journey voices (the default in production)
-/// reject SSML input entirely.
+/// 1.5s of silence (24 kHz mono MP3) concatenated between section chunks.
+/// Each chunk is a separate Google TTS request, so a single SSML `<break>`
+/// can't span them — the silent MP3 bridges the gap.
 const SECTION_SILENCE_MP3: &[u8] = include_bytes!("silence_1500ms.mp3");
 
 /// TTS configuration.
@@ -31,7 +34,7 @@ impl TtsConfig {
     pub fn new(google_api_key: String) -> Self {
         Self {
             google_api_key,
-            voice: "en-US-Journey-D".to_string(),
+            voice: "en-US-Neural2-D".to_string(),
         }
     }
 
@@ -522,6 +525,60 @@ fn rfind_word_boundary(s: &str, max_bytes: usize) -> Option<usize> {
     Some(s[..byte_idx].chars().count())
 }
 
+/// Wrap chunk text as SSML with `<p>` per paragraph and `<s>` per sentence.
+/// Paragraphs are separated by blank lines in the source text. XML-special
+/// characters in the sentence bodies are escaped.
+fn build_ssml(text: &str) -> String {
+    let mut out = String::from("<speak>");
+    let mut wrote_paragraph = false;
+    for raw_para in text.split("\n\n") {
+        let para = raw_para.trim();
+        if para.is_empty() {
+            continue;
+        }
+        let mut sentences: Vec<String> = Vec::new();
+        for s in split_sentences(para) {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed);
+            }
+        }
+        if sentences.is_empty() {
+            continue;
+        }
+        out.push_str("<p>");
+        for s in sentences {
+            out.push_str("<s>");
+            out.push_str(&xml_escape(&s));
+            out.push_str("</s>");
+        }
+        out.push_str("</p>");
+        wrote_paragraph = true;
+    }
+    // `<speak/>` alone is invalid SSML; fall back to a single empty paragraph
+    // so Google TTS returns a brief silence rather than 400.
+    if !wrote_paragraph {
+        out.push_str("<p><s></s></p>");
+    }
+    out.push_str("</speak>");
+    out
+}
+
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 async fn tts_google(
     client: &reqwest::Client,
     config: &TtsConfig,
@@ -532,10 +589,12 @@ async fn tts_google(
         config.google_api_key
     );
 
+    let ssml = build_ssml(text);
+
     let resp = client
         .post(&url)
         .json(&serde_json::json!({
-            "input": { "text": text },
+            "input": { "ssml": ssml },
             "voice": {
                 "languageCode": "en-US",
                 "name": config.voice,
@@ -705,6 +764,49 @@ mod tests {
         let audio = b"\xff\xfb\x90\x00fake";
         let out = embed_chapters(audio, &[], 10).unwrap();
         assert_eq!(&out[..], audio);
+    }
+
+    #[test]
+    fn test_build_ssml_wraps_paragraphs_and_sentences() {
+        let ssml = build_ssml("First sentence. Second sentence.\n\nNew paragraph. With two sentences.");
+        assert!(ssml.starts_with("<speak>"));
+        assert!(ssml.ends_with("</speak>"));
+        // Two paragraph blocks
+        assert_eq!(ssml.matches("<p>").count(), 2);
+        assert_eq!(ssml.matches("</p>").count(), 2);
+        // Four sentences total
+        assert_eq!(ssml.matches("<s>").count(), 4);
+        assert_eq!(ssml.matches("</s>").count(), 4);
+        assert!(ssml.contains("<s>First sentence.</s>"));
+        assert!(ssml.contains("<s>New paragraph.</s>"));
+    }
+
+    #[test]
+    fn test_build_ssml_escapes_xml_chars() {
+        let ssml = build_ssml("Tom & Jerry said \"hi\" to <you>.");
+        assert!(ssml.contains("&amp;"));
+        assert!(ssml.contains("&quot;"));
+        assert!(ssml.contains("&lt;you&gt;"));
+        // Raw specials must not survive inside sentence bodies.
+        assert!(!ssml.contains(" & "));
+        assert!(!ssml.contains("<you>"));
+    }
+
+    #[test]
+    fn test_build_ssml_empty_input() {
+        // Empty-input degenerate case: must still produce syntactically valid
+        // SSML (Google rejects bare `<speak/>`).
+        let ssml = build_ssml("   \n\n   ");
+        assert!(ssml.starts_with("<speak>") && ssml.ends_with("</speak>"));
+        assert!(ssml.contains("<p>"));
+    }
+
+    #[test]
+    fn test_build_ssml_single_paragraph() {
+        let ssml = build_ssml("Just one sentence.");
+        assert_eq!(ssml.matches("<p>").count(), 1);
+        assert_eq!(ssml.matches("<s>").count(), 1);
+        assert!(ssml.contains("<s>Just one sentence.</s>"));
     }
 
     #[test]

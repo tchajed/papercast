@@ -27,7 +27,7 @@ You need four external providers. Keep all keys in `.env` locally; `scripts/sync
 - Enable the **Cloud Text-to-Speech API**: https://console.cloud.google.com/apis/library/texttospeech.googleapis.com → **Enable**.
 - Create an API key: **APIs & Services → Credentials → Create credentials → API key**. Copy the `AIza…` value.
 - Restrict the key (recommended): **Edit → API restrictions → Restrict key → Cloud Text-to-Speech API**. Don't add an HTTP referrer restriction — the calls come from Fly, not a browser.
-- This is `GOOGLE_TTS_API_KEY`. Billing must be enabled on the project; Journey voices are paid.
+- This is `GOOGLE_TTS_API_KEY`. Billing must be enabled on the project; Neural2 voices are paid.
 
 ### 4. Google AI Studio — Gemini (cover art, optional clean/summarize provider)
 
@@ -221,5 +221,5 @@ Per-episode variable costs:
 
 - Claude cleanup: $0.01–$1.50 (Sonnet cheap, Opus on long papers expensive).
 - Claude PDF extraction: ~$0.20–0.60 per 20-page paper.
-- Google TTS: ~$0.04 per 20k characters (Journey voices).
+- Google TTS: ~$0.04 per 20k characters (Neural2 voices).
 - Gemini cover art: ~$0.04 per episode.

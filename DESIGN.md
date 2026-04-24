@@ -222,7 +222,7 @@ When the submission sets `summarize: true`, an extra stage produces a shorter sp
 
 ### TTS
 
-Google Cloud Text-to-Speech, Journey voices by default (`GOOGLE_TTS_VOICE`, defaults to `en-US-Journey-D`). Text is split at sentence boundaries into ~4000-char chunks, each synthesized separately; MP3 frames are concatenated. Exact duration is computed with the `mp3-duration` crate. Progress is reported via `tts_chunks_done/total`.
+Google Cloud Text-to-Speech, Neural2 voices by default (`GOOGLE_TTS_VOICE`, defaults to `en-US-Neural2-D`). The chunk text is wrapped in SSML (`<speak><p><s>…</s></p></speak>`) so Google's prosody engine uses paragraph/sentence breaks explicitly — Journey voices rejected SSML, which is why they're no longer the default. Text is split at sentence boundaries into ~3600-char chunks, each synthesized separately; MP3 frames are concatenated. Exact duration is computed with the `mp3-duration` crate. Progress is reported via `tts_chunks_done/total`.
 
 ### Cover Image
 

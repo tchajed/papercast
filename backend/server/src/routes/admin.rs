@@ -11,6 +11,7 @@ use serde::Serialize;
 use sqlx::FromRow;
 
 use crate::error::{AppError, AppResult};
+use crate::ids::new_id;
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -22,6 +23,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/admin/episodes/{episode_id}/backfill-chapters",
             post(backfill_chapters),
+        )
+        .route(
+            "/api/v1/admin/episodes/{episode_id}/rerun-tts",
+            post(rerun_tts),
         )
 }
 
@@ -139,7 +144,7 @@ fn estimated_cost_usd(u: &UsageGroup) -> f64 {
         ("claude", _) => (3.0, 15.0),
         ("gemini", m) if m.contains("image") => (0.30, 30.0), // image model — output tokens reported as image tokens
         ("gemini", _) => (0.30, 2.50),
-        ("google_tts", _) => (16.0, 0.0), // per 1M chars, Journey voices
+        ("google_tts", _) => (16.0, 0.0), // per 1M chars, Neural2 voices
         _ => (0.0, 0.0),
     };
     (u.input_tokens as f64 * in_rate + u.output_tokens as f64 * out_rate) / 1_000_000.0
@@ -325,4 +330,61 @@ async fn backfill_chapters(
         chapters: sections.len(),
         audio_bytes,
     }))
+}
+
+#[derive(Serialize)]
+struct RerunTtsResponse {
+    episode_id: String,
+    job_id: String,
+}
+
+/// Re-synthesize an existing episode's audio by enqueueing a fresh `tts` job.
+/// Requires the episode to already have `cleaned_text` (or `transcript`) —
+/// this is a TTS-only rerun, not a full pipeline restart.
+async fn rerun_tts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(episode_id): Path<String>,
+) -> AppResult<Json<RerunTtsResponse>> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    let (has_text,) = sqlx::query_as::<_, (bool,)>(
+        "SELECT (cleaned_text IS NOT NULL OR transcript IS NOT NULL) AS has_text
+         FROM episodes WHERE id = $1",
+    )
+    .bind(&episode_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if !has_text {
+        return Err(AppError::BadRequest(
+            "episode has no cleaned_text or transcript; run full pipeline instead".into(),
+        ));
+    }
+
+    let job_id = new_id();
+    let mut tx = state.pool.begin().await?;
+
+    // Reset progress so the UI doesn't show stale "N/N complete" during the rerun.
+    sqlx::query(
+        "UPDATE episodes SET status = 'tts', error_msg = NULL,
+             tts_chunks_done = 0, tts_chunks_total = 0
+         WHERE id = $1",
+    )
+    .bind(&episode_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO jobs (id, episode_id, job_type, status) VALUES ($1, $2, 'tts', 'queued')",
+    )
+    .bind(&job_id)
+    .bind(&episode_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(Json(RerunTtsResponse { episode_id, job_id }))
 }
