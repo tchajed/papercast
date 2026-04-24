@@ -49,14 +49,8 @@ pub enum MessageContent {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum ContentBlock {
-    Image {
-        r#type: String,
-        source: ImageSource,
-    },
-    Text {
-        r#type: String,
-        text: String,
-    },
+    Image { r#type: String, source: ImageSource },
+    Text { r#type: String, text: String },
 }
 
 #[derive(Serialize)]
@@ -90,7 +84,9 @@ pub enum ResponseBlock {
 
 impl Response {
     pub fn text(&self) -> Option<&str> {
-        self.content.first().map(|ResponseBlock::Text { text }| text.as_str())
+        self.content
+            .first()
+            .map(|ResponseBlock::Text { text }| text.as_str())
     }
 }
 
@@ -142,7 +138,12 @@ pub async fn chat(
         .json(&request)
         .send()
         .await
-        .with_context(|| format!("Claude request failed (model={model}, input_chars={input_chars}, elapsed={:?})", started.elapsed()))?;
+        .with_context(|| {
+            format!(
+                "Claude request failed (model={model}, input_chars={input_chars}, elapsed={:?})",
+                started.elapsed()
+            )
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();

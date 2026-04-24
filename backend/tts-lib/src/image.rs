@@ -84,7 +84,6 @@ async fn generate_from_prompt(
     prompt: &str,
     model: &str,
 ) -> Result<(GeneratedImage, Usage)> {
-
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={google_api_key}"
     );
@@ -161,8 +160,6 @@ fn center_crop_square(bytes: &[u8], mime_type: &str) -> Result<(Vec<u8>, String)
     square
         .write_to(&mut out, image::ImageFormat::Png)
         .context("Failed to encode cropped image")?;
-    tracing::info!(
-        "Center-cropped cover image from {w}x{h} to {side}x{side}"
-    );
+    tracing::info!("Center-cropped cover image from {w}x{h} to {side}x{side}");
     Ok((out.into_inner(), "image/png".to_string()))
 }

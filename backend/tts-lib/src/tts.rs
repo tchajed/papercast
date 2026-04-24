@@ -87,7 +87,10 @@ pub async fn synthesize(
     let sections_text = parse_sections(text);
     let has_sections = !sections_text.is_empty() && sections_text.iter().any(|s| s.title.is_some());
     let sections_for_chunking = if sections_text.is_empty() {
-        vec![SectionText { title: None, body: text.to_string() }]
+        vec![SectionText {
+            title: None,
+            body: text.to_string(),
+        }]
     } else {
         sections_text
     };
@@ -127,7 +130,11 @@ pub async fn synthesize(
             async move {
                 let chunk_words = chunk.text.split_whitespace().count();
                 let cache_path = cache_dir.as_ref().map(|d| {
-                    format!("{}/{}", d, chunk_cache_filename(i, &chunk.text, &config.voice))
+                    format!(
+                        "{}/{}",
+                        d,
+                        chunk_cache_filename(i, &chunk.text, &config.voice)
+                    )
                 });
                 let audio = if let Some(ref p) = cache_path {
                     match tokio::fs::read(p).await {
@@ -172,8 +179,7 @@ pub async fn synthesize(
                     .map(|d| d.as_secs_f64())
                     .unwrap_or_else(|_| chunk_words as f64 / 150.0 * 60.0);
                 let audio = if chunk.append_pause {
-                    let mut combined =
-                        Vec::with_capacity(audio.len() + SECTION_SILENCE_MP3.len());
+                    let mut combined = Vec::with_capacity(audio.len() + SECTION_SILENCE_MP3.len());
                     combined.extend_from_slice(&audio);
                     combined.extend_from_slice(SECTION_SILENCE_MP3);
                     Bytes::from(combined)
@@ -211,7 +217,11 @@ pub async fn synthesize(
     // Compute section start times by summing chunk durations before each
     // section's first chunk.
     let sections = if has_sections {
-        build_section_timeline(&sections_for_chunking, &chunk_section_idxs, &per_chunk_durations)
+        build_section_timeline(
+            &sections_for_chunking,
+            &chunk_section_idxs,
+            &per_chunk_durations,
+        )
     } else {
         Vec::new()
     };
@@ -238,7 +248,11 @@ pub async fn synthesize(
 /// embedded chapters (Overcast, Apple Podcasts pre-2025) show them. Clients
 /// walk past the tag to find the first MP3 sync frame, so the returned bytes
 /// are still playable.
-pub fn embed_chapters(audio: &[u8], sections: &[Section], total_duration_secs: u32) -> Result<Bytes> {
+pub fn embed_chapters(
+    audio: &[u8],
+    sections: &[Section],
+    total_duration_secs: u32,
+) -> Result<Bytes> {
     if sections.is_empty() {
         return Ok(Bytes::copy_from_slice(audio));
     }
@@ -378,7 +392,11 @@ fn build_chunks(sections: &[SectionText], max_chars: usize) -> Vec<Chunk> {
     }
     if chunks.is_empty() {
         // Nothing parsed — fall back to full text as one chunk
-        let fallback: String = sections.iter().map(|s| s.body.as_str()).collect::<Vec<_>>().join("\n\n");
+        let fallback: String = sections
+            .iter()
+            .map(|s| s.body.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         chunks.push(Chunk {
             text: fallback,
             section_idx: 0,
@@ -484,10 +502,7 @@ fn split_long_sentence(sentence: String) -> Vec<String> {
     if !current.is_empty() {
         pieces.push(current);
     }
-    pieces
-        .into_iter()
-        .flat_map(hard_split_if_needed)
-        .collect()
+    pieces.into_iter().flat_map(hard_split_if_needed).collect()
 }
 
 /// Word-boundary split for pieces still over the per-sentence limit.
@@ -584,11 +599,7 @@ fn xml_escape(s: &str) -> String {
     out
 }
 
-async fn tts_google(
-    client: &reqwest::Client,
-    config: &TtsConfig,
-    text: &str,
-) -> Result<Bytes> {
+async fn tts_google(client: &reqwest::Client, config: &TtsConfig, text: &str) -> Result<Bytes> {
     let url = format!(
         "https://texttospeech.googleapis.com/v1/text:synthesize?key={}",
         config.google_api_key
@@ -620,7 +631,10 @@ async fn tts_google(
         anyhow::bail!("Google TTS {status}: {truncated}");
     }
 
-    let body: serde_json::Value = resp.json().await.context("Google TTS response parse failed")?;
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .context("Google TTS response parse failed")?;
     let audio_b64 = body["audioContent"]
         .as_str()
         .context("No audioContent in Google TTS response")?;
@@ -655,11 +669,18 @@ mod tests {
         let segment = "Define the strategy by doing X across the enterprise";
         let long = format!(
             "Our strategic priorities are: {}",
-            std::iter::repeat(segment).take(40).collect::<Vec<_>>().join(", ")
+            std::iter::repeat(segment)
+                .take(40)
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         assert!(long.len() > MAX_SENTENCE_CHARS);
         let pieces = split_sentences(&long);
-        assert!(pieces.len() > 1, "expected multi-piece split, got {}", pieces.len());
+        assert!(
+            pieces.len() > 1,
+            "expected multi-piece split, got {}",
+            pieces.len()
+        );
         for p in &pieces {
             assert!(
                 p.len() <= MAX_SENTENCE_CHARS,
@@ -734,12 +755,21 @@ mod tests {
     #[test]
     fn test_build_chunks_marks_section_ends() {
         let sections = vec![
-            SectionText { title: Some("A".into()), body: "Sentence one.".into() },
-            SectionText { title: Some("B".into()), body: "Sentence two.".into() },
+            SectionText {
+                title: Some("A".into()),
+                body: "Sentence one.".into(),
+            },
+            SectionText {
+                title: Some("B".into()),
+                body: "Sentence two.".into(),
+            },
         ];
         let chunks = build_chunks(&sections, 1000);
         assert_eq!(chunks.len(), 2);
-        assert!(chunks[0].append_pause, "end of non-final section should pause");
+        assert!(
+            chunks[0].append_pause,
+            "end of non-final section should pause"
+        );
         assert!(!chunks[1].append_pause, "final section does not pause");
     }
 
@@ -747,9 +777,18 @@ mod tests {
     fn test_embed_chapters_round_trip() {
         let audio = b"\xff\xfb\x90\x00fake-mp3-frames";
         let sections = vec![
-            Section { title: "Intro".into(), start_secs: 0.0 },
-            Section { title: "Middle".into(), start_secs: 12.5 },
-            Section { title: "Outro".into(), start_secs: 42.0 },
+            Section {
+                title: "Intro".into(),
+                start_secs: 0.0,
+            },
+            Section {
+                title: "Middle".into(),
+                start_secs: 12.5,
+            },
+            Section {
+                title: "Outro".into(),
+                start_secs: 42.0,
+            },
         ];
         let out = embed_chapters(audio, &sections, 60).unwrap();
         assert_eq!(&out[..3], b"ID3", "must start with ID3v2 magic");
@@ -773,7 +812,8 @@ mod tests {
 
     #[test]
     fn test_build_ssml_wraps_paragraphs_and_sentences() {
-        let ssml = build_ssml("First sentence. Second sentence.\n\nNew paragraph. With two sentences.");
+        let ssml =
+            build_ssml("First sentence. Second sentence.\n\nNew paragraph. With two sentences.");
         assert!(ssml.starts_with("<speak>"));
         assert!(ssml.ends_with("</speak>"));
         // Two paragraph blocks
@@ -817,8 +857,14 @@ mod tests {
     #[test]
     fn test_build_section_timeline() {
         let sections = vec![
-            SectionText { title: Some("A".into()), body: "x".into() },
-            SectionText { title: Some("B".into()), body: "y".into() },
+            SectionText {
+                title: Some("A".into()),
+                body: "x".into(),
+            },
+            SectionText {
+                title: Some("B".into()),
+                body: "y".into(),
+            },
         ];
         let idxs = vec![0, 1];
         let durations = vec![10.0, 5.0];
@@ -829,5 +875,4 @@ mod tests {
         assert_eq!(tl[1].title, "B");
         assert_eq!(tl[1].start_secs, 10.0);
     }
-
 }

@@ -3,8 +3,8 @@ pub mod episodes;
 pub mod feeds;
 pub mod rss;
 
-use axum::Router;
 use crate::AppState;
+use axum::Router;
 
 pub fn api_router() -> Router<AppState> {
     Router::new()

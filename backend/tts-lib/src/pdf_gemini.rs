@@ -49,9 +49,7 @@ pub async fn extract_with_model(
     model: &str,
 ) -> Result<(Document, Vec<Usage>)> {
     let page_count = pdf_page_count(pdf_path).await?;
-    tracing::info!(
-        "Extracting PDF via Gemini ({page_count} pages, {CHUNK_PAGES}-page chunks)"
-    );
+    tracing::info!("Extracting PDF via Gemini ({page_count} pages, {CHUNK_PAGES}-page chunks)");
 
     let work_dir = format!("{}_chunks", pdf_path.trim_end_matches(".pdf"));
     tokio::fs::create_dir_all(&work_dir).await?;
@@ -66,23 +64,25 @@ pub async fn extract_with_model(
         start = end + 1;
     }
 
-    let results: Vec<Result<(u32, String, Option<Usage>)>> = stream::iter(chunks.into_iter().enumerate())
-        .map(|(i, (page_start, path))| {
-            let api_key = google_api_key.to_string();
-            let model = model.to_string();
-            async move {
-                let is_first = i == 0;
-                let (text, usage) = extract_chunk_cached(&path, &api_key, &model, is_first)
-                    .await
-                    .with_context(|| format!("Chunk starting at page {page_start}"))?;
-                Ok::<_, anyhow::Error>((page_start, text, usage))
-            }
-        })
-        .buffer_unordered(CHUNK_CONCURRENCY)
-        .collect()
-        .await;
+    let results: Vec<Result<(u32, String, Option<Usage>)>> =
+        stream::iter(chunks.into_iter().enumerate())
+            .map(|(i, (page_start, path))| {
+                let api_key = google_api_key.to_string();
+                let model = model.to_string();
+                async move {
+                    let is_first = i == 0;
+                    let (text, usage) = extract_chunk_cached(&path, &api_key, &model, is_first)
+                        .await
+                        .with_context(|| format!("Chunk starting at page {page_start}"))?;
+                    Ok::<_, anyhow::Error>((page_start, text, usage))
+                }
+            })
+            .buffer_unordered(CHUNK_CONCURRENCY)
+            .collect()
+            .await;
 
-    let mut indexed: Vec<(u32, String, Option<Usage>)> = results.into_iter().collect::<Result<_>>()?;
+    let mut indexed: Vec<(u32, String, Option<Usage>)> =
+        results.into_iter().collect::<Result<_>>()?;
     indexed.sort_by_key(|(p, _, _)| *p);
 
     let _ = tokio::fs::remove_dir_all(&work_dir).await;
@@ -95,11 +95,15 @@ pub async fn extract_with_model(
     let mut pieces: Vec<String> = Vec::with_capacity(indexed.len());
     let mut usages: Vec<Usage> = Vec::new();
     let first_usage = indexed.first().and_then(|(_, _, u)| u.clone());
-    if let Some(u) = first_usage { usages.push(u); }
+    if let Some(u) = first_usage {
+        usages.push(u);
+    }
     pieces.push(first_text);
     for (_, text, usage) in indexed.into_iter().skip(1) {
         pieces.push(text.trim().to_string());
-        if let Some(u) = usage { usages.push(u); }
+        if let Some(u) = usage {
+            usages.push(u);
+        }
     }
     let raw_text = pieces.join("\n\n");
 
@@ -107,14 +111,20 @@ pub async fn extract_with_model(
         bail!("Empty text extracted from PDF");
     }
 
-    tracing::info!("Gemini extracted {} chars from {page_count} pages", raw_text.len());
+    tracing::info!(
+        "Gemini extracted {} chars from {page_count} pages",
+        raw_text.len()
+    );
 
-    Ok((Document {
-        title: Some(title),
-        source_type: "pdf".to_string(),
-        raw_text: Some(raw_text),
-        ..Default::default()
-    }, usages))
+    Ok((
+        Document {
+            title: Some(title),
+            source_type: "pdf".to_string(),
+            raw_text: Some(raw_text),
+            ..Default::default()
+        },
+        usages,
+    ))
 }
 
 /// Remove any `*_chunks` working directories under `parent_dir` whose mtime is
@@ -131,11 +141,15 @@ pub async fn gc_chunk_dirs(parent_dir: &str, max_age: std::time::Duration) {
     let now = std::time::SystemTime::now();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name();
-        let Some(name_str) = name.to_str() else { continue };
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
         if !name_str.ends_with("_chunks") {
             continue;
         }
-        let Ok(md) = entry.metadata().await else { continue };
+        let Ok(md) = entry.metadata().await else {
+            continue;
+        };
         if !md.is_dir() {
             continue;
         }
@@ -160,7 +174,10 @@ async fn pdf_page_count(pdf_path: &str) -> Result<u32> {
         .await
         .context("Failed to run pdfinfo — is poppler-utils installed?")?;
     if !output.status.success() {
-        bail!("pdfinfo failed: {}", String::from_utf8_lossy(&output.stderr));
+        bail!(
+            "pdfinfo failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
@@ -189,7 +206,10 @@ async fn split_chunk(pdf_path: &str, first: u32, last: u32, out_path: &str) -> R
         .await
         .context("Failed to run pdfseparate")?;
     if !sep.status.success() {
-        bail!("pdfseparate failed: {}", String::from_utf8_lossy(&sep.stderr));
+        bail!(
+            "pdfseparate failed: {}",
+            String::from_utf8_lossy(&sep.stderr)
+        );
     }
 
     let page_files: Vec<String> = (first..=last)
@@ -207,7 +227,10 @@ async fn split_chunk(pdf_path: &str, first: u32, last: u32, out_path: &str) -> R
             .await
             .context("Failed to run pdfunite")?;
         if !unite.status.success() {
-            bail!("pdfunite failed: {}", String::from_utf8_lossy(&unite.stderr));
+            bail!(
+                "pdfunite failed: {}",
+                String::from_utf8_lossy(&unite.stderr)
+            );
         }
     }
 
@@ -255,7 +278,11 @@ async fn extract_chunk(
     }
 
     let pdf_b64 = base64::engine::general_purpose::STANDARD.encode(&pdf_bytes);
-    let prompt = if is_first { FIRST_CHUNK_PROMPT } else { CONTINUATION_PROMPT };
+    let prompt = if is_first {
+        FIRST_CHUNK_PROMPT
+    } else {
+        CONTINUATION_PROMPT
+    };
 
     let request = serde_json::json!({
         "contents": [{
@@ -289,12 +316,15 @@ async fn extract_chunk(
         }
         match try_extract_chunk(&client, &url, &request).await {
             Ok((text, usage)) => {
-                return Ok((text, Usage {
-                    provider: "gemini".into(),
-                    model: model.to_string(),
-                    input_tokens: usage.0,
-                    output_tokens: usage.1,
-                }));
+                return Ok((
+                    text,
+                    Usage {
+                        provider: "gemini".into(),
+                        model: model.to_string(),
+                        input_tokens: usage.0,
+                        output_tokens: usage.1,
+                    },
+                ));
             }
             Err(ChunkError { transient, source }) => {
                 if !transient || attempt + 1 == backoffs_ms.len() {

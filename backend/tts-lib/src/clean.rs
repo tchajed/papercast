@@ -61,8 +61,27 @@ fn is_math_heavy(text: &str) -> bool {
     let math_symbols = text
         .chars()
         .filter(|c| {
-            matches!(*c,
-                '∑' | '∫' | '∂' | '∇' | '∞' | '≤' | '≥' | '≠' | '≈' | '→' | '⇒' | '⊆' | '⊇' | '∈' | '∉' | '∀' | '∃' | '⋅' | '×' | '±'
+            matches!(
+                *c,
+                '∑' | '∫'
+                    | '∂'
+                    | '∇'
+                    | '∞'
+                    | '≤'
+                    | '≥'
+                    | '≠'
+                    | '≈'
+                    | '→'
+                    | '⇒'
+                    | '⊆'
+                    | '⊇'
+                    | '∈'
+                    | '∉'
+                    | '∀'
+                    | '∃'
+                    | '⋅'
+                    | '×'
+                    | '±'
             ) || matches!(*c as u32, 0x0391..=0x03C9)
         })
         .count();
@@ -211,9 +230,8 @@ async fn run_outline(provider: &Provider, raw_text: &str) -> Result<(Outline, Us
     let body = body.strip_suffix("```").unwrap_or(body);
     let body = body.trim();
 
-    let outline: Outline = serde_json::from_str(body).with_context(|| {
-        format!("Outline JSON parse failed. Raw response:\n{}", result.text)
-    })?;
+    let outline: Outline = serde_json::from_str(body)
+        .with_context(|| format!("Outline JSON parse failed. Raw response:\n{}", result.text))?;
     Ok((outline, result.usage))
 }
 
@@ -534,7 +552,11 @@ async fn clean_chunked(
         outline.intro_line.is_some(),
         outline.sections.len(),
         outline.main_body_end_anchor.as_deref(),
-        outline.sections.iter().map(|s| s.title.as_str()).collect::<Vec<_>>()
+        outline
+            .sections
+            .iter()
+            .map(|s| s.title.as_str())
+            .collect::<Vec<_>>()
     );
 
     let sections = locate_sections(raw_text, &outline)?;
@@ -592,9 +614,7 @@ async fn clean_chunked(
     }
     let cleaned_text = out.trim_end().to_string();
     let word_count = cleaned_text.split_whitespace().count();
-    tracing::info!(
-        "Cleaning complete (chunked): {word_count} words, {n} chunks"
-    );
+    tracing::info!("Cleaning complete (chunked): {word_count} words, {n} chunks");
 
     Ok((
         Document {
@@ -634,9 +654,7 @@ pub async fn clean(doc: &Document, provider: &Provider) -> Result<(Document, Vec
         match clean_chunked(doc, provider, raw_text).await {
             Ok(result) => return Ok(result),
             Err(e) => {
-                tracing::warn!(
-                    "Chunked cleanup failed; falling back to single-call path: {e:#}"
-                );
+                tracing::warn!("Chunked cleanup failed; falling back to single-call path: {e:#}");
             }
         }
     }

@@ -17,18 +17,18 @@ pub async fn run(
         return Ok(());
     }
 
-    let cleaned_text = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT cleaned_text FROM episodes WHERE id = $1",
-    )
-    .bind(episode_id)
-    .fetch_one(pool)
-    .await?
-    .context("No cleaned_text for image generation")?;
+    let cleaned_text =
+        sqlx::query_scalar::<_, Option<String>>("SELECT cleaned_text FROM episodes WHERE id = $1")
+            .bind(episode_id)
+            .fetch_one(pool)
+            .await?
+            .context("No cleaned_text for image generation")?;
 
     let provider = config.make_provider();
     let (summary, vs_usage) = tts_lib::image::visual_summary(&cleaned_text, &provider).await?;
     crate::usage::record(pool, Some(episode_id), None, "visual_summary", &vs_usage).await;
-    let (image, img_usage) = tts_lib::image::generate_image(&config.google_studio_api_key, &summary).await?;
+    let (image, img_usage) =
+        tts_lib::image::generate_image(&config.google_studio_api_key, &summary).await?;
     crate::usage::record(pool, Some(episode_id), None, "image", &img_usage).await;
 
     let image_url = storage

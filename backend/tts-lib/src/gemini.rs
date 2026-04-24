@@ -53,7 +53,12 @@ pub async fn chat(
         .json(&body)
         .send()
         .await
-        .with_context(|| format!("Gemini request failed (model={model}, input_chars={input_chars}, elapsed={:?})", started.elapsed()))?;
+        .with_context(|| {
+            format!(
+                "Gemini request failed (model={model}, input_chars={input_chars}, elapsed={:?})",
+                started.elapsed()
+            )
+        })?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
@@ -79,7 +84,9 @@ pub async fn chat(
         .join("");
 
     if text.is_empty() {
-        let finish_reason = body["candidates"][0]["finishReason"].as_str().unwrap_or("unknown");
+        let finish_reason = body["candidates"][0]["finishReason"]
+            .as_str()
+            .unwrap_or("unknown");
         tracing::error!(
             "Gemini empty response: model={model} finish_reason={finish_reason} elapsed={:?}",
             started.elapsed()

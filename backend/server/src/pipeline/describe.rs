@@ -2,11 +2,7 @@ use anyhow::{Context, Result};
 
 use crate::config::AppConfig;
 
-pub async fn run(
-    episode_id: &str,
-    pool: &sqlx::SqlitePool,
-    config: &AppConfig,
-) -> Result<()> {
+pub async fn run(episode_id: &str, pool: &sqlx::SqlitePool, config: &AppConfig) -> Result<()> {
     let (transcript, cleaned_text) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
         "SELECT transcript, cleaned_text FROM episodes WHERE id = $1",
     )

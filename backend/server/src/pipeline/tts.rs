@@ -22,8 +22,8 @@ pub async fn run(
         .context("No text available for TTS")?;
 
     let voice = episode_voice.unwrap_or_else(|| config.google_tts_voice.clone());
-    let tts_config = tts_lib::tts::TtsConfig::new(config.google_tts_api_key.clone())
-        .with_voice(voice.clone());
+    let tts_config =
+        tts_lib::tts::TtsConfig::new(config.google_tts_api_key.clone()).with_voice(voice.clone());
 
     // Set up progress tracking
     let pool_clone = pool.clone();
@@ -32,12 +32,14 @@ pub async fn run(
         let pool = pool_clone.clone();
         let ep_id = ep_id.clone();
         tokio::spawn(async move {
-            let _ = sqlx::query("UPDATE episodes SET tts_chunks_done = $1, tts_chunks_total = $2 WHERE id = $3")
-                .bind(done as i32)
-                .bind(total as i32)
-                .bind(&ep_id)
-                .execute(&pool)
-                .await;
+            let _ = sqlx::query(
+                "UPDATE episodes SET tts_chunks_done = $1, tts_chunks_total = $2 WHERE id = $3",
+            )
+            .bind(done as i32)
+            .bind(total as i32)
+            .bind(&ep_id)
+            .execute(&pool)
+            .await;
         });
     });
 
@@ -45,9 +47,13 @@ pub async fn run(
     // synthesized in an earlier attempt. Cleared on success; stale dirs are
     // garbage-collected by `gc_chunk_dirs` on worker startup.
     let cache_dir = format!("/data/{}_tts_chunks", episode_id);
-    let result =
-        tts_lib::tts::synthesize(&tts_text, &tts_config, Some(on_progress), Some(cache_dir.clone()))
-            .await?;
+    let result = tts_lib::tts::synthesize(
+        &tts_text,
+        &tts_config,
+        Some(on_progress),
+        Some(cache_dir.clone()),
+    )
+    .await?;
 
     // TTS cost is per-character. Record char count in input_tokens for a uniform
     // usage schema; output_tokens stays 0.

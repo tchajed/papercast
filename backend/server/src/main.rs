@@ -76,8 +76,7 @@ async fn main() {
     let index_file = format!("{}/index.html", static_dir);
 
     // Fallback serves index.html for SPA client-side routing
-    let serve_static =
-        ServeDir::new(&static_dir).not_found_service(ServeFile::new(&index_file));
+    let serve_static = ServeDir::new(&static_dir).not_found_service(ServeFile::new(&index_file));
 
     let app = Router::new()
         .merge(routes::rss_router())

@@ -209,7 +209,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::ExtractPdf { pdf_path, extractor } => {
+        Command::ExtractPdf {
+            pdf_path,
+            extractor,
+        } => {
             let doc = extract_pdf(&pdf_path, &extractor).await?;
             print_document(&doc)?;
         }
@@ -224,7 +227,10 @@ async fn main() -> Result<()> {
             let provider = make_provider(&provider)?;
             let (doc, usages) = tts_lib::clean::clean(&doc, &provider).await?;
             for usage in &usages {
-                eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
+                eprintln!(
+                    "usage: {} {} input={} output={}",
+                    usage.provider, usage.model, usage.input_tokens, usage.output_tokens
+                );
             }
             print_document(&doc)?;
         }
@@ -232,8 +238,12 @@ async fn main() -> Result<()> {
         Command::Summarize { provider, focus } => {
             let doc = read_stdin_document()?;
             let provider = make_provider(&provider)?;
-            let (doc, usage) = tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
-            eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
+            let (doc, usage) =
+                tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
+            eprintln!(
+                "usage: {} {} input={} output={}",
+                usage.provider, usage.model, usage.input_tokens, usage.output_tokens
+            );
             print_document(&doc)?;
         }
 
@@ -241,7 +251,10 @@ async fn main() -> Result<()> {
             let doc = read_stdin_document()?;
             let provider = make_provider(&provider)?;
             let (description, usage) = tts_lib::describe::describe(&doc, &provider).await?;
-            eprintln!("usage: {} {} input={} output={}", usage.provider, usage.model, usage.input_tokens, usage.output_tokens);
+            eprintln!(
+                "usage: {} {} input={} output={}",
+                usage.provider, usage.model, usage.input_tokens, usage.output_tokens
+            );
             println!("{description}");
         }
 
@@ -255,9 +268,22 @@ async fn main() -> Result<()> {
             let provider = make_provider(&provider)?;
             let (summary, summary_usage) = tts_lib::image::visual_summary(text, &provider).await?;
             eprintln!("Visual brief: {summary}");
-            eprintln!("usage: {} {} input={} output={}", summary_usage.provider, summary_usage.model, summary_usage.input_tokens, summary_usage.output_tokens);
-            let (image, image_usage) = tts_lib::image::generate_image(&google_studio_key()?, &summary).await?;
-            eprintln!("usage: {} {} input={} output={}", image_usage.provider, image_usage.model, image_usage.input_tokens, image_usage.output_tokens);
+            eprintln!(
+                "usage: {} {} input={} output={}",
+                summary_usage.provider,
+                summary_usage.model,
+                summary_usage.input_tokens,
+                summary_usage.output_tokens
+            );
+            let (image, image_usage) =
+                tts_lib::image::generate_image(&google_studio_key()?, &summary).await?;
+            eprintln!(
+                "usage: {} {} input={} output={}",
+                image_usage.provider,
+                image_usage.model,
+                image_usage.input_tokens,
+                image_usage.output_tokens
+            );
             let ext = match image.mime_type.as_str() {
                 "image/png" => "png",
                 "image/jpeg" => "jpg",
@@ -266,7 +292,11 @@ async fn main() -> Result<()> {
             };
             let path = format!("{output}.{ext}");
             tokio::fs::write(&path, &image.bytes).await?;
-            eprintln!("Wrote {path} ({} bytes, {})", image.bytes.len(), image.mime_type);
+            eprintln!(
+                "Wrote {path} ({} bytes, {})",
+                image.bytes.len(),
+                image.mime_type
+            );
         }
 
         Command::Tts { output, voice } => {
@@ -307,10 +337,7 @@ async fn main() -> Result<()> {
                 tts_lib::scrape::scrape(&source, &source_type).await?
             };
 
-            eprintln!(
-                "Title: {}",
-                doc.title.as_deref().unwrap_or("(none)")
-            );
+            eprintln!("Title: {}", doc.title.as_deref().unwrap_or("(none)"));
             eprintln!(
                 "Raw text: {} chars",
                 doc.raw_text.as_ref().map_or(0, |t| t.len())
@@ -325,10 +352,7 @@ async fn main() -> Result<()> {
             eprintln!("--- Clean ---");
             let (new_doc, _clean_usages) = tts_lib::clean::clean(&doc, &provider).await?;
             doc = new_doc;
-            eprintln!(
-                "Cleaned text: {} words",
-                doc.word_count.unwrap_or(0)
-            );
+            eprintln!("Cleaned text: {} words", doc.word_count.unwrap_or(0));
 
             if stop_after.as_deref() == Some("clean") {
                 print_document(&doc)?;
@@ -338,12 +362,10 @@ async fn main() -> Result<()> {
             // Stage 3: Summarize (optional)
             if summarize {
                 eprintln!("--- Summarize ---");
-                let (new_doc, _sum_usage) = tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
+                let (new_doc, _sum_usage) =
+                    tts_lib::summarize::summarize(&doc, &provider, focus.as_deref()).await?;
                 doc = new_doc;
-                eprintln!(
-                    "Transcript: {} words",
-                    doc.word_count.unwrap_or(0)
-                );
+                eprintln!("Transcript: {} words", doc.word_count.unwrap_or(0));
 
                 if stop_after.as_deref() == Some("summarize") {
                     print_document(&doc)?;
@@ -364,7 +386,12 @@ async fn main() -> Result<()> {
             );
         }
 
-        Command::Costs { server, token, days, episode } => {
+        Command::Costs {
+            server,
+            token,
+            days,
+            episode,
+        } => {
             run_costs(&server, &token, days, episode.as_deref()).await?;
         }
     }
@@ -405,7 +432,10 @@ async fn run_costs(
             .error_for_status()?
             .json()
             .await?;
-        println!("{:<14} {:<10} {:<28} {:>10} {:>10}  {}", "stage", "provider", "model", "input", "output", "when");
+        println!(
+            "{:<14} {:<10} {:<28} {:>10} {:>10}  {}",
+            "stage", "provider", "model", "input", "output", "when"
+        );
         for r in &resp.rows {
             println!(
                 "{:<14} {:<10} {:<28} {:>10} {:>10}  {}",

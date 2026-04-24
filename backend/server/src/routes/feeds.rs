@@ -1,3 +1,6 @@
+use crate::error::{AppError, AppResult};
+use crate::ids::{new_id, new_token};
+use crate::AppState;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -6,9 +9,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use crate::error::{AppError, AppResult};
-use crate::ids::{new_id, new_token};
-use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -103,9 +103,7 @@ async fn create_feed(
     require_admin(&headers, &state.config.admin_token)?;
 
     if req.tts_default != "google" {
-        return Err(AppError::BadRequest(
-            "tts_default must be 'google'".into(),
-        ));
+        return Err(AppError::BadRequest("tts_default must be 'google'".into()));
     }
 
     let id = new_id();
@@ -264,17 +262,18 @@ async fn update_feed(
     let new_title = req.title.unwrap_or(feed.title);
     let new_description = req.description.unwrap_or(feed.description);
 
-    sqlx::query(
-        "UPDATE feeds SET slug = $1, title = $2, description = $3 WHERE id = $4",
-    )
-    .bind(&new_slug)
-    .bind(&new_title)
-    .bind(&new_description)
-    .bind(&feed.id)
-    .execute(&state.pool)
-    .await?;
+    sqlx::query("UPDATE feeds SET slug = $1, title = $2, description = $3 WHERE id = $4")
+        .bind(&new_slug)
+        .bind(&new_title)
+        .bind(&new_description)
+        .bind(&feed.id)
+        .execute(&state.pool)
+        .await?;
 
-    let rss_url = format!("{}/feed/{}/rss.xml", state.config.public_url, feed.feed_token);
+    let rss_url = format!(
+        "{}/feed/{}/rss.xml",
+        state.config.public_url, feed.feed_token
+    );
 
     Ok(Json(FeedResponse {
         id: feed.id,
@@ -308,11 +307,8 @@ async fn regenerate_feed_image(
         format!("{}. {}", feed.title, feed.description)
     };
 
-    let (image, img_usage) = tts_lib::image::generate_feed_cover(
-        &state.config.google_studio_api_key,
-        &brief,
-    )
-    .await?;
+    let (image, img_usage) =
+        tts_lib::image::generate_feed_cover(&state.config.google_studio_api_key, &brief).await?;
     crate::usage::record(&state.pool, None, Some(&feed.id), "feed_image", &img_usage).await;
 
     let image_url = state
@@ -326,7 +322,10 @@ async fn regenerate_feed_image(
         .execute(&state.pool)
         .await?;
 
-    let rss_url = format!("{}/feed/{}/rss.xml", state.config.public_url, feed.feed_token);
+    let rss_url = format!(
+        "{}/feed/{}/rss.xml",
+        state.config.public_url, feed.feed_token
+    );
 
     Ok(Json(FeedResponse {
         id: feed.id,

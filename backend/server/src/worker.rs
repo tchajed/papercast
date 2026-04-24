@@ -1,9 +1,9 @@
-use anyhow::Result;
-use sqlx::{FromRow, SqlitePool};
-use std::time::Duration;
 use crate::config::AppConfig;
 use crate::ids::new_id;
 use crate::pipeline::storage::StorageClient;
+use anyhow::Result;
+use sqlx::{FromRow, SqlitePool};
+use std::time::Duration;
 
 #[derive(Debug, FromRow)]
 struct Job {
@@ -23,7 +23,10 @@ pub async fn run_startup_recovery(pool: &SqlitePool) {
         .await
     {
         Ok(res) if res.rows_affected() > 0 => {
-            tracing::warn!("Recovered {} orphaned running jobs to queued", res.rows_affected());
+            tracing::warn!(
+                "Recovered {} orphaned running jobs to queued",
+                res.rows_affected()
+            );
         }
         Ok(_) => {}
         Err(e) => tracing::error!("Failed to recover orphaned jobs: {e}"),
@@ -83,7 +86,13 @@ async fn claim_next_job(pool: &SqlitePool) -> Result<Option<Job>> {
     Ok(job)
 }
 
-async fn execute_job(worker_id: usize, job: Job, pool: &SqlitePool, config: &AppConfig, storage: &StorageClient) {
+async fn execute_job(
+    worker_id: usize,
+    job: Job,
+    pool: &SqlitePool,
+    config: &AppConfig,
+    storage: &StorageClient,
+) {
     tracing::info!(
         "Worker {worker_id} executing job {} (type={}, episode={}, attempt={})",
         job.id,
@@ -138,9 +147,7 @@ async fn execute_job(worker_id: usize, job: Job, pool: &SqlitePool, config: &App
             // ": ", so the underlying cause (e.g. the HTTP status/body from
             // Google TTS) is preserved in `episodes.error_msg`.
             let msg = format!("{e:#}");
-            if let Err(e2) =
-                fail_job(pool, &job, &msg, config.max_job_attempts, non_fatal).await
-            {
+            if let Err(e2) = fail_job(pool, &job, &msg, config.max_job_attempts, non_fatal).await {
                 tracing::error!("Failed to record job failure {}: {e2}", job.id);
             }
         }
@@ -173,13 +180,12 @@ async fn complete_job(pool: &SqlitePool, job: &Job, config: &AppConfig) -> Resul
         }
         "clean" => {
             // Check if this episode needs summarization
-            let summarize = sqlx::query_scalar::<_, i32>(
-                "SELECT summarize FROM episodes WHERE id = $1",
-            )
-            .bind(&job.episode_id)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap_or(0);
+            let summarize =
+                sqlx::query_scalar::<_, i32>("SELECT summarize FROM episodes WHERE id = $1")
+                    .bind(&job.episode_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap_or(0);
 
             if summarize != 0 {
                 let job_id = new_id();
@@ -368,7 +374,9 @@ mod tests {
 
     #[test]
     fn detects_503_patterns() {
-        assert!(is_upstream_outage("Claude API failed (503): service unavailable"));
+        assert!(is_upstream_outage(
+            "Claude API failed (503): service unavailable"
+        ));
         assert!(is_upstream_outage("model is overloaded"));
         assert!(is_upstream_outage("Service Unavailable"));
     }

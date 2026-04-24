@@ -58,43 +58,46 @@ pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<(Documen
         .collect();
     let primary_files = rendered[0].2.clone();
 
-    let page_results: Vec<Result<(usize, String, u32, u32)>> = stream::iter(
-        primary_files.into_iter().enumerate()
-    )
-    .map(|(i, primary_path)| {
-        let client = client.clone();
-        let fallback_dirs = fallback_dirs.clone();
-        async move {
-            let page_num = i + 1;
-            let mut result =
-                extract_page(&client, anthropic_api_key, &primary_path, page_num).await?;
-            let mut total_in = result.input_tokens;
-            let mut total_out = result.output_tokens;
+    let page_results: Vec<Result<(usize, String, u32, u32)>> =
+        stream::iter(primary_files.into_iter().enumerate())
+            .map(|(i, primary_path)| {
+                let client = client.clone();
+                let fallback_dirs = fallback_dirs.clone();
+                async move {
+                    let page_num = i + 1;
+                    let mut result =
+                        extract_page(&client, anthropic_api_key, &primary_path, page_num).await?;
+                    let mut total_in = result.input_tokens;
+                    let mut total_out = result.output_tokens;
 
-            if result.skipped {
-                for (dpi, fb_dir) in &fallback_dirs {
-                    let fb_path = page_path_for(fb_dir, page_num);
-                    tracing::info!("Retrying page {page_num} at {dpi} DPI");
-                    result = extract_page(&client, anthropic_api_key, &fb_path, page_num).await?;
-                    total_in += result.input_tokens;
-                    total_out += result.output_tokens;
-                    if !result.skipped {
-                        break;
+                    if result.skipped {
+                        for (dpi, fb_dir) in &fallback_dirs {
+                            let fb_path = page_path_for(fb_dir, page_num);
+                            tracing::info!("Retrying page {page_num} at {dpi} DPI");
+                            result = extract_page(&client, anthropic_api_key, &fb_path, page_num)
+                                .await?;
+                            total_in += result.input_tokens;
+                            total_out += result.output_tokens;
+                            if !result.skipped {
+                                break;
+                            }
+                        }
                     }
+
+                    if result.skipped {
+                        tracing::warn!(
+                            "Page {page_num} blocked by content filter at all DPIs, skipping"
+                        );
+                    }
+                    Ok::<_, anyhow::Error>((i, result.text, total_in, total_out))
                 }
-            }
+            })
+            .buffer_unordered(PAGE_CONCURRENCY)
+            .collect()
+            .await;
 
-            if result.skipped {
-                tracing::warn!("Page {page_num} blocked by content filter at all DPIs, skipping");
-            }
-            Ok::<_, anyhow::Error>((i, result.text, total_in, total_out))
-        }
-    })
-    .buffer_unordered(PAGE_CONCURRENCY)
-    .collect()
-    .await;
-
-    let mut indexed: Vec<(usize, String, u32, u32)> = page_results.into_iter().collect::<Result<_>>()?;
+    let mut indexed: Vec<(usize, String, u32, u32)> =
+        page_results.into_iter().collect::<Result<_>>()?;
     indexed.sort_by_key(|(i, _, _, _)| *i);
     let mut usages: Vec<Usage> = Vec::new();
     let all_text: Vec<String> = indexed
@@ -134,12 +137,15 @@ pub async fn extract(pdf_path: &str, anthropic_api_key: &str) -> Result<(Documen
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 
-    Ok((Document {
-        title: Some(title),
-        source_type: "pdf".to_string(),
-        raw_text: Some(raw_text),
-        ..Default::default()
-    }, usages))
+    Ok((
+        Document {
+            title: Some(title),
+            source_type: "pdf".to_string(),
+            raw_text: Some(raw_text),
+            ..Default::default()
+        },
+        usages,
+    ))
 }
 
 async fn render_pdf(pdf_path: &str, out_dir: &str, dpi: u32) -> Result<Vec<String>> {
@@ -195,7 +201,8 @@ async fn extract_page(
     page_path: &str,
     page_num: usize,
 ) -> Result<PageResult> {
-    let page_bytes = tokio::fs::read(page_path).await
+    let page_bytes = tokio::fs::read(page_path)
+        .await
         .with_context(|| format!("Failed to read page image {page_path}"))?;
     let page_b64 = base64::engine::general_purpose::STANDARD.encode(&page_bytes);
 

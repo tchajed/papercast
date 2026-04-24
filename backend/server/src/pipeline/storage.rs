@@ -57,10 +57,7 @@ impl StorageClient {
             .send()
             .await?;
 
-        Ok(format!(
-            "https://{}.t3.tigrisfiles.io/{}",
-            self.bucket, key
-        ))
+        Ok(format!("https://{}.t3.tigrisfiles.io/{}", self.bucket, key))
     }
 
     pub async fn upload_episode_image(
@@ -88,10 +85,7 @@ impl StorageClient {
             .send()
             .await?;
 
-        Ok(format!(
-            "https://{}.t3.tigrisfiles.io/{}",
-            self.bucket, key
-        ))
+        Ok(format!("https://{}.t3.tigrisfiles.io/{}", self.bucket, key))
     }
 
     pub async fn upload_feed_image(

@@ -56,7 +56,15 @@ impl Provider {
         user_message: &str,
         max_output_tokens: u32,
     ) -> anyhow::Result<ChatResult> {
-        self.chat_opts(client, claude_model, system, user_message, max_output_tokens, false).await
+        self.chat_opts(
+            client,
+            claude_model,
+            system,
+            user_message,
+            max_output_tokens,
+            false,
+        )
+        .await
     }
 
     /// Like `chat`, but with opt-in system-prompt caching (Claude only; Gemini
@@ -72,10 +80,27 @@ impl Provider {
     ) -> anyhow::Result<ChatResult> {
         match self {
             Provider::Claude { api_key } => {
-                claude::chat(client, api_key, claude_model, system, user_message, max_output_tokens, cache_system).await
+                claude::chat(
+                    client,
+                    api_key,
+                    claude_model,
+                    system,
+                    user_message,
+                    max_output_tokens,
+                    cache_system,
+                )
+                .await
             }
             Provider::Gemini { api_key, model } => {
-                gemini::chat(client, api_key, model, system, user_message, max_output_tokens).await
+                gemini::chat(
+                    client,
+                    api_key,
+                    model,
+                    system,
+                    user_message,
+                    max_output_tokens,
+                )
+                .await
             }
         }
     }
@@ -118,8 +143,6 @@ fn default_source_type() -> String {
 /// Text that should be sent to TTS — transcript if available, otherwise cleaned_text.
 impl Document {
     pub fn tts_text(&self) -> Option<&str> {
-        self.transcript
-            .as_deref()
-            .or(self.cleaned_text.as_deref())
+        self.transcript.as_deref().or(self.cleaned_text.as_deref())
     }
 }

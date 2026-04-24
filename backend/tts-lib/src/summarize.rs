@@ -48,9 +48,12 @@ pub async fn summarize(
     let word_count = transcript.split_whitespace().count();
     tracing::info!("Summarization complete: {word_count} words");
 
-    Ok((Document {
-        transcript: Some(transcript),
-        word_count: Some(word_count),
-        ..doc.clone()
-    }, result.usage))
+    Ok((
+        Document {
+            transcript: Some(transcript),
+            word_count: Some(word_count),
+            ..doc.clone()
+        },
+        result.usage,
+    ))
 }

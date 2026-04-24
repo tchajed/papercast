@@ -19,7 +19,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/admin/status", get(status))
         .route("/api/v1/admin/jobs", get(list_jobs))
         .route("/api/v1/admin/usage", get(usage_summary))
-        .route("/api/v1/admin/usage/episode/{episode_id}", get(usage_for_episode))
+        .route(
+            "/api/v1/admin/usage/episode/{episode_id}",
+            get(usage_for_episode),
+        )
         .route(
             "/api/v1/admin/episodes/{episode_id}/backfill-chapters",
             post(backfill_chapters),
@@ -185,7 +188,10 @@ async fn usage_summary(
     };
 
     let groups: Vec<UsageGroup> = if days.is_some() {
-        sqlx::query_as(&sql).bind(days.unwrap()).fetch_all(&state.pool).await?
+        sqlx::query_as(&sql)
+            .bind(days.unwrap())
+            .fetch_all(&state.pool)
+            .await?
     } else {
         sqlx::query_as(&sql).fetch_all(&state.pool).await?
     };
@@ -280,9 +286,10 @@ async fn backfill_chapters(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    let audio_url = audio_url.ok_or_else(|| AppError::BadRequest("episode has no audio_url".into()))?;
-    let sections_json = sections_json
-        .ok_or_else(|| AppError::BadRequest("episode has no sections_json".into()))?;
+    let audio_url =
+        audio_url.ok_or_else(|| AppError::BadRequest("episode has no audio_url".into()))?;
+    let sections_json =
+        sections_json.ok_or_else(|| AppError::BadRequest("episode has no sections_json".into()))?;
     let sections: Vec<tts_lib::tts::Section> = serde_json::from_str(&sections_json)
         .map_err(|e| AppError::BadRequest(format!("invalid sections_json: {e}")))?;
     if sections.is_empty() {
@@ -304,8 +311,7 @@ async fn backfill_chapters(
         .await
         .map_err(|e| anyhow::anyhow!("read mp3 body: {e}"))?;
 
-    let with_chapters =
-        tts_lib::tts::embed_chapters(&existing, &sections, duration)?;
+    let with_chapters = tts_lib::tts::embed_chapters(&existing, &sections, duration)?;
     let audio_bytes = with_chapters.len() as i64;
     let new_audio_url = state
         .storage

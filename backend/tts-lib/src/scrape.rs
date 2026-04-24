@@ -72,7 +72,11 @@ pub async fn fetch_article(url: &str) -> Result<ArticleFetch> {
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map(|ct| ct.trim().to_ascii_lowercase().starts_with("application/pdf"))
+            .map(|ct| {
+                ct.trim()
+                    .to_ascii_lowercase()
+                    .starts_with("application/pdf")
+            })
             .unwrap_or(false);
 
     if is_pdf {
@@ -138,10 +142,15 @@ async fn fetch_arxiv_html(client: &Client, arxiv_id: &str) -> Result<(String, St
             tracing::info!("arxiv.org/html failed for {arxiv_id}, falling back to ar5iv");
         }
         Ok(resp) => {
-            tracing::info!("arxiv.org/html returned {} for {arxiv_id}, falling back to ar5iv", resp.status());
+            tracing::info!(
+                "arxiv.org/html returned {} for {arxiv_id}, falling back to ar5iv",
+                resp.status()
+            );
         }
         Err(e) => {
-            tracing::info!("arxiv.org/html request failed for {arxiv_id}: {e}, falling back to ar5iv");
+            tracing::info!(
+                "arxiv.org/html request failed for {arxiv_id}: {e}, falling back to ar5iv"
+            );
         }
     }
 
@@ -246,7 +255,10 @@ fn render_latexml_node(node: ego_tree::NodeRef<scraper::node::Node>, out: &mut S
                 || class.contains("ltx_authors")
                 || class.contains("ltx_dates")
                 || class.contains("ltx_classification")
-                || matches!(name, "cite" | "nav" | "footer" | "script" | "style" | "figure" | "table")
+                || matches!(
+                    name,
+                    "cite" | "nav" | "footer" | "script" | "style" | "figure" | "table"
+                )
             {
                 return;
             }
@@ -263,7 +275,10 @@ fn render_latexml_node(node: ego_tree::NodeRef<scraper::node::Node>, out: &mut S
 
             let is_heading = matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
             let is_block = is_heading
-                || matches!(name, "p" | "section" | "article" | "div" | "li" | "blockquote")
+                || matches!(
+                    name,
+                    "p" | "section" | "article" | "div" | "li" | "blockquote"
+                )
                 || class.contains("ltx_para")
                 || class.contains("ltx_paragraph")
                 || class.contains("ltx_section")

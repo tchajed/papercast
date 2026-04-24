@@ -1,3 +1,6 @@
+use crate::error::{AppError, AppResult};
+use crate::ids::new_id;
+use crate::AppState;
 use axum::{
     extract::{DefaultBodyLimit, Multipart, Path, State},
     http::StatusCode,
@@ -6,16 +9,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use crate::error::{AppError, AppResult};
-use crate::ids::new_id;
-use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route(
-            "/api/v1/feeds/{feed_token}/episodes",
-            post(submit_episode),
-        )
+        .route("/api/v1/feeds/{feed_token}/episodes", post(submit_episode))
         .route(
             "/api/v1/feeds/{feed_token}/episodes/pdf",
             post(upload_pdf).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
@@ -26,7 +23,9 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/v1/feeds/{feed_token}/episodes/{episode_id}",
-            get(get_episode).delete(delete_episode).patch(update_episode),
+            get(get_episode)
+                .delete(delete_episode)
+                .patch(update_episode),
         )
         .route(
             "/api/v1/feeds/{feed_token}/episodes/{episode_id}/text",
@@ -103,7 +102,10 @@ fn extract_arxiv_id(url: &str) -> Option<String> {
     for pat in patterns {
         if let Some(idx) = url.find(pat) {
             let rest = &url[idx + pat.len()..];
-            let id: String = rest.chars().take_while(|c| *c != '/' && *c != '?').collect();
+            let id: String = rest
+                .chars()
+                .take_while(|c| *c != '/' && *c != '?')
+                .collect();
             if !id.is_empty() {
                 return Some(id);
             }
@@ -114,12 +116,11 @@ fn extract_arxiv_id(url: &str) -> Option<String> {
 
 /// Resolve the feed ID from a feed_token, returning NotFound if invalid.
 async fn resolve_feed(pool: &sqlx::SqlitePool, feed_token: &str) -> AppResult<String> {
-    let row =
-        sqlx::query_scalar::<_, String>("SELECT id FROM feeds WHERE feed_token = $1")
-            .bind(feed_token)
-            .fetch_optional(pool)
-            .await?
-            .ok_or(AppError::NotFound)?;
+    let row = sqlx::query_scalar::<_, String>("SELECT id FROM feeds WHERE feed_token = $1")
+        .bind(feed_token)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(row)
 }
 
@@ -143,10 +144,7 @@ fn validate_tts_provider(provider: Option<&String>, default: String) -> AppResul
 /// Voice IDs the UI is allowed to select. Keep in sync with the frontend
 /// VOICES catalog in src/lib/voices.ts. Unknown voices are rejected at the
 /// API boundary so a typo doesn't reach Google TTS as an opaque 400.
-const SUPPORTED_VOICES: &[&str] = &[
-    "en-US-Chirp3-HD-Puck",
-    "en-US-Chirp3-HD-Kore",
-];
+const SUPPORTED_VOICES: &[&str] = &["en-US-Chirp3-HD-Puck", "en-US-Chirp3-HD-Kore"];
 
 fn validate_tts_voice(voice: Option<&String>) -> AppResult<Option<String>> {
     match voice.map(|s| s.trim()).filter(|s| !s.is_empty()) {
@@ -233,9 +231,11 @@ async fn upload_pdf(
     let mut summarize = false;
     let mut summarize_focus: Option<String> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::BadRequest(format!("Failed to read multipart field: {e}"))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Failed to read multipart field: {e}")))?
+    {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "file" => {
@@ -257,33 +257,25 @@ async fn upload_pdf(
                 );
             }
             "tts_provider" => {
-                tts_provider_field = Some(
-                    field
-                        .text()
-                        .await
-                        .map_err(|e| {
-                            AppError::BadRequest(format!("Failed to read tts_provider: {e}"))
-                        })?,
-                );
+                tts_provider_field = Some(field.text().await.map_err(|e| {
+                    AppError::BadRequest(format!("Failed to read tts_provider: {e}"))
+                })?);
             }
             "tts_voice" => {
-                tts_voice_field = Some(
-                    field
-                        .text()
-                        .await
-                        .map_err(|e| {
-                            AppError::BadRequest(format!("Failed to read tts_voice: {e}"))
-                        })?,
-                );
+                tts_voice_field =
+                    Some(field.text().await.map_err(|e| {
+                        AppError::BadRequest(format!("Failed to read tts_voice: {e}"))
+                    })?);
             }
             "summarize" => {
                 let val = field.text().await.unwrap_or_default();
                 summarize = val == "true" || val == "1";
             }
             "source_url" => {
-                let val = field.text().await.map_err(|e| {
-                    AppError::BadRequest(format!("Failed to read source_url: {e}"))
-                })?;
+                let val = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("Failed to read source_url: {e}")))?;
                 let trimmed = val.trim();
                 if !trimmed.is_empty() {
                     source_url = Some(trimmed.to_string());
@@ -317,14 +309,18 @@ async fn upload_pdf(
     let job_id = new_id();
 
     if is_markdown {
-        let text = String::from_utf8(file_bytes).map_err(|_| {
-            AppError::BadRequest("Markdown upload must be valid UTF-8".into())
-        })?;
+        let text = String::from_utf8(file_bytes)
+            .map_err(|_| AppError::BadRequest("Markdown upload must be valid UTF-8".into()))?;
         let title = title.unwrap_or_else(|| {
             file_name
                 .as_deref()
                 .and_then(|n| n.rsplit('/').next())
-                .map(|n| n.trim_end_matches(".md").trim_end_matches(".markdown").trim_end_matches(".txt").to_string())
+                .map(|n| {
+                    n.trim_end_matches(".md")
+                        .trim_end_matches(".markdown")
+                        .trim_end_matches(".txt")
+                        .to_string()
+                })
                 .unwrap_or_else(|| "Markdown Upload".into())
         });
 
@@ -437,7 +433,12 @@ async fn submit_text(
     let default = get_tts_default(&state.pool, &feed_id).await?;
     let tts_provider = validate_tts_provider(req.tts_provider.as_ref(), default)?;
     let tts_voice = validate_tts_voice(req.tts_voice.as_ref())?;
-    let source_url = req.source_url.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    let source_url = req
+        .source_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
 
     let episode_id = new_id();
     let job_id = new_id();
@@ -446,7 +447,12 @@ async fn submit_text(
 
     // Markdown/text goes in as raw_text directly; we skip the scrape stage
     // and enqueue a clean job to normalize it for TTS.
-    let focus = req.summarize_focus.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    let focus = req
+        .summarize_focus
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
     sqlx::query(
         "INSERT INTO episodes (id, feed_id, title, source_url, source_type, raw_text, tts_provider, tts_voice, summarize, summarize_focus, status)
          VALUES ($1, $2, $3, $4, 'markdown', $5, $6, $7, $8, $9, 'cleaning')",
@@ -542,7 +548,11 @@ async fn update_episode(
 
     if let Some(source_url) = req.source_url.as_ref() {
         let url = source_url.trim();
-        let new_url: Option<String> = if url.is_empty() { None } else { Some(url.to_string()) };
+        let new_url: Option<String> = if url.is_empty() {
+            None
+        } else {
+            Some(url.to_string())
+        };
         let new_type = new_url.as_deref().map(detect_source_type);
         sqlx::query("UPDATE episodes SET source_url = $1, source_type = COALESCE($2, source_type) WHERE id = $3 AND feed_id = $4")
             .bind(&new_url)
@@ -597,17 +607,26 @@ mod tests {
 
     #[test]
     fn test_detect_source_type_arxiv() {
-        assert_eq!(detect_source_type("https://arxiv.org/abs/2301.12345"), "arxiv");
+        assert_eq!(
+            detect_source_type("https://arxiv.org/abs/2301.12345"),
+            "arxiv"
+        );
     }
 
     #[test]
     fn test_detect_source_type_ar5iv() {
-        assert_eq!(detect_source_type("https://ar5iv.org/abs/2301.12345"), "arxiv");
+        assert_eq!(
+            detect_source_type("https://ar5iv.org/abs/2301.12345"),
+            "arxiv"
+        );
     }
 
     #[test]
     fn test_detect_source_type_article() {
-        assert_eq!(detect_source_type("https://example.com/some-article"), "article");
+        assert_eq!(
+            detect_source_type("https://example.com/some-article"),
+            "article"
+        );
     }
 
     #[test]

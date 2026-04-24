@@ -7,9 +7,7 @@ use axum::{
 };
 use serde::Serialize;
 use sqlx::FromRow;
-use time::{
-    format_description::well_known::Rfc2822, PrimitiveDateTime, UtcOffset,
-};
+use time::{format_description::well_known::Rfc2822, PrimitiveDateTime, UtcOffset};
 
 use crate::error::{AppError, AppResult};
 use crate::AppState;
@@ -70,10 +68,7 @@ async fn rss_feed(
     .fetch_all(&state.pool)
     .await?;
 
-    let feed_link = format!(
-        "{}/feeds/{}",
-        state.config.public_url, feed.feed_token
-    );
+    let feed_link = format!("{}/feeds/{}", state.config.public_url, feed.feed_token);
     let rss_link = format!(
         "{}/feed/{}/rss.xml",
         state.config.public_url, feed.feed_token
@@ -105,10 +100,7 @@ async fn rss_feed(
         }
 
         let image_tag = if let Some(ref img_url) = ep.image_url {
-            format!(
-                "\n      <itunes:image href=\"{}\"/>",
-                xml_escape(img_url)
-            )
+            format!("\n      <itunes:image href=\"{}\"/>", xml_escape(img_url))
         } else {
             String::new()
         };
@@ -185,10 +177,7 @@ async fn rss_feed(
 
     Ok((
         [
-            (
-                header::CONTENT_TYPE,
-                "application/rss+xml; charset=utf-8",
-            ),
+            (header::CONTENT_TYPE, "application/rss+xml; charset=utf-8"),
             (header::CACHE_CONTROL, "max-age=300"),
         ],
         xml,
@@ -263,12 +252,13 @@ fn display_title(title: &str, summarize: i32) -> String {
 }
 
 fn format_rfc2822(s: &str) -> Option<String> {
-    let fmt = time::format_description::parse(
-        "[year]-[month]-[day] [hour]:[minute]:[second]",
-    )
-    .ok()?;
+    let fmt =
+        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").ok()?;
     let primitive = PrimitiveDateTime::parse(s, &fmt).ok()?;
-    primitive.assume_offset(UtcOffset::UTC).format(&Rfc2822).ok()
+    primitive
+        .assume_offset(UtcOffset::UTC)
+        .format(&Rfc2822)
+        .ok()
 }
 
 /// Podcasting 2.0 JSON Chapters spec: https://podcasting2.org/podcast-namespace/tags/chapters
@@ -345,7 +335,10 @@ fn render_chapters(sections_json: Option<&str>) -> Option<String> {
     if sections.is_empty() {
         return None;
     }
-    let use_hours = sections.last().map(|s| s.start_secs >= 3600.0).unwrap_or(false);
+    let use_hours = sections
+        .last()
+        .map(|s| s.start_secs >= 3600.0)
+        .unwrap_or(false);
     let mut out = String::new();
     for s in &sections {
         out.push_str(&format_timestamp(s.start_secs, use_hours));

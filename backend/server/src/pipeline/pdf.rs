@@ -2,11 +2,7 @@ use anyhow::Result;
 
 use crate::config::AppConfig;
 
-pub async fn run(
-    episode_id: &str,
-    pool: &sqlx::SqlitePool,
-    config: &AppConfig,
-) -> Result<()> {
+pub async fn run(episode_id: &str, pool: &sqlx::SqlitePool, config: &AppConfig) -> Result<()> {
     let pdf_path = format!("/data/{}.pdf", episode_id);
 
     let (doc, usages) = match config.pdf_extractor.as_str() {
@@ -24,11 +20,12 @@ pub async fn run(
     // For manual PDF uploads, preserve the user-provided title unless it's
     // still the default "PDF Upload". For arxiv fallback path, always replace
     // the arXiv:NNNN placeholder with the extracted title.
-    let (current_title, source_type) =
-        sqlx::query_as::<_, (String, String)>("SELECT title, source_type FROM episodes WHERE id = $1")
-            .bind(episode_id)
-            .fetch_one(pool)
-            .await?;
+    let (current_title, source_type) = sqlx::query_as::<_, (String, String)>(
+        "SELECT title, source_type FROM episodes WHERE id = $1",
+    )
+    .bind(episode_id)
+    .fetch_one(pool)
+    .await?;
 
     let final_title = if source_type == "pdf" && current_title != "PDF Upload" {
         &current_title
